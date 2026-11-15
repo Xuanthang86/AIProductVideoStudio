@@ -287,6 +287,10 @@ export default function App() {
 
               {accountMenuOpen && (
                 <div className="account-dropdown" role="menu" aria-label="Menu tài khoản">
+                  <div className="account-dropdown-head">
+                    <strong>{user.fullName}</strong>
+                    <span>{user.email}</span>
+                  </div>
                   <div className="account-dropdown-list">
                     <button type="button" role="menuitem" onClick={() => navigate('/profile')}>
                       <UserIcon size={16} /> Thông tin tài khoản
