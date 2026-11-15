@@ -260,10 +260,12 @@ export default function App() {
     if (!user) return;
 
     let lastActivityWrite = 0;
+    let lastActivityInMemory = Date.now();
     let logoutStarted = false;
     const markActivity = () => {
       if (document.visibilityState === 'hidden') return;
       const now = Date.now();
+      lastActivityInMemory = now;
       // Throttle storage writes while still recording genuine user interaction.
       if (now - lastActivityWrite < 3000) return;
       lastActivityWrite = now;
@@ -287,10 +289,10 @@ export default function App() {
       if (logoutStarted) return;
       const now = Date.now();
       let backgroundAt = 0;
-      let lastActivity = now;
+      let lastActivity = lastActivityInMemory;
       try {
         backgroundAt = Number(window.localStorage.getItem(AUTH_BACKGROUND_KEY) || 0);
-        lastActivity = Number(window.localStorage.getItem(AUTH_ACTIVITY_KEY) || now);
+        lastActivity = Number(window.localStorage.getItem(AUTH_ACTIVITY_KEY) || lastActivityInMemory);
       } catch {
         // Fall back to the current tab's in-memory activity timer.
       }
