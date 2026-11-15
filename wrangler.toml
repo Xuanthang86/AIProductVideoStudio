@@ -14,5 +14,5 @@ database_id = "db9fca26-709e-48b2-8114-386d3c31c39c"
 migrations_dir = "migrations"
 
 [vars]
-SESSION_DAYS = "7"
+SESSION_DAYS = "30"
 APP_ORIGIN = "https://aivideo.xuanthang.io.vn"
