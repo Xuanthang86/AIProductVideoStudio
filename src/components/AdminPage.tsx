@@ -307,7 +307,7 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
           <span className="eyebrow">HỆ THỐNG QUẢN TRỊ</span>
           <h1>Bảng điều khiển quản trị viên</h1>
           <p>
-            Đăng nhập với vai trò <b>{roleLabel[actor.role]}</b>. Tài khoản Super Admin được bảo vệ tuyệt đối ở máy chủ và cơ sở dữ liệu.
+            Đăng nhập với vai trò <b>{roleLabel[actor.role]}</b>.
           </p>
         </div>
       </div>
@@ -435,14 +435,14 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                           </span>
                         </td>
                         <td>
-                          <small>
-                            {u.quota.dailyVideoLimit}/ngày · {u.quota.monthlyVideoLimit}/tháng · {u.quota.maxDurationSec}s
-                          </small>
+                          {u.role !== 'SUPER_ADMIN' && (
+                            <small>
+                              {u.quota.dailyVideoLimit}/ngày · {u.quota.monthlyVideoLimit}/tháng · {u.quota.maxDurationSec}s
+                            </small>
+                          )}
                         </td>
                         <td>
-                          {u.role === 'SUPER_ADMIN' ? (
-                            <span className="muted-copy">Không thể tác động</span>
-                          ) : canManage(u) ? (
+                          {u.role === 'SUPER_ADMIN' ? null : canManage(u) ? (
                             <div className="admin-row-btns">
                               {u.status === 'PENDING_APPROVAL' && (
                                 <>
