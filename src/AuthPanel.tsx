@@ -6,6 +6,15 @@ import type { User, UserQuota, UserUsage } from './types';
 
 const REMEMBER_LOGIN_KEY = 'avs_remember_login';
 const SAVED_IDENTIFIER_KEY = 'avs_saved_identifier';
+const SAVED_PASSWORD_KEY = 'avs_saved_password';
+
+function getRememberedPassword() {
+  try {
+    return localStorage.getItem(REMEMBER_LOGIN_KEY) === '1' ? localStorage.getItem(SAVED_PASSWORD_KEY) || '' : '';
+  } catch {
+    return '';
+  }
+}
 
 type Props = {
   open: boolean;
@@ -52,7 +61,7 @@ export default function AuthPanel({
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [purpose, setPurpose] = useState('');
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState<string>(() => (initialMode === 'login' ? getRememberedPassword() : ''));
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -87,6 +96,7 @@ export default function AuthPanel({
       return;
     }
     setMode(initialMode === 'account' ? 'login' : initialMode);
+    setPassword(initialMode === 'register' ? '' : getRememberedPassword());
     api<{ user: User | null; quota?: UserQuota; usage?: UserUsage }>('/api/auth/me')
       .then(r => {
         if (r.user) {
@@ -128,9 +138,11 @@ export default function AuthPanel({
       if (checked) {
         localStorage.setItem(REMEMBER_LOGIN_KEY, '1');
         if (identifier.trim()) localStorage.setItem(SAVED_IDENTIFIER_KEY, identifier.trim());
+        if (password) localStorage.setItem(SAVED_PASSWORD_KEY, password);
       } else {
         localStorage.removeItem(REMEMBER_LOGIN_KEY);
         localStorage.removeItem(SAVED_IDENTIFIER_KEY);
+        localStorage.removeItem(SAVED_PASSWORD_KEY);
       }
     } catch {
       // Ignore storage errors in restricted environments
@@ -160,9 +172,11 @@ export default function AuthPanel({
           if (rememberLogin) {
             localStorage.setItem(REMEMBER_LOGIN_KEY, '1');
             localStorage.setItem(SAVED_IDENTIFIER_KEY, identifier.trim());
+            if (password) localStorage.setItem(SAVED_PASSWORD_KEY, password);
           } else {
             localStorage.removeItem(REMEMBER_LOGIN_KEY);
             localStorage.removeItem(SAVED_IDENTIFIER_KEY);
+            localStorage.removeItem(SAVED_PASSWORD_KEY);
           }
         } catch {
           // Ignore storage errors
@@ -266,6 +280,7 @@ export default function AuthPanel({
               className={mode === 'login' ? 'selected' : ''}
               onClick={() => {
                 setMode('login');
+                setPassword(getRememberedPassword());
                 setError('');
               }}
             >
@@ -278,6 +293,7 @@ export default function AuthPanel({
               className={mode === 'register' ? 'selected' : ''}
               onClick={() => {
                 setMode('register');
+                setPassword('');
                 setError('');
               }}
             >
@@ -376,7 +392,17 @@ export default function AuthPanel({
                   <input
                     name="username"
                     value={identifier}
-                    onChange={e => setIdentifier(e.target.value)}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setIdentifier(value);
+                      if (rememberLogin) {
+                        try {
+                          localStorage.setItem(SAVED_IDENTIFIER_KEY, value.trim());
+                        } catch {
+                          // Ignore storage errors
+                        }
+                      }
+                    }}
                     autoComplete="username"
                     placeholder="email@example.com hoặc tên đăng nhập"
                     required
@@ -387,7 +413,17 @@ export default function AuthPanel({
                   <PasswordInput
                     name="password"
                     value={password}
-                    onValueChange={setPassword}
+                    onValueChange={value => {
+                      setPassword(value);
+                      if (rememberLogin) {
+                        try {
+                          if (value) localStorage.setItem(SAVED_PASSWORD_KEY, value);
+                          else localStorage.removeItem(SAVED_PASSWORD_KEY);
+                        } catch {
+                          // Ignore storage errors
+                        }
+                      }
+                    }}
                     autoComplete="current-password"
                     placeholder="Nhập mật khẩu"
                     clearAriaLabel="Xóa mật khẩu đăng nhập"
@@ -401,7 +437,7 @@ export default function AuthPanel({
                       checked={rememberLogin}
                       onChange={e => handleRememberChange(e.target.checked)}
                     />
-                    <span>Ghi nhớ mật khẩu</span>
+                    <span>Ghi nhớ tài khoản</span>
                   </label>
                 </div>
               </>
