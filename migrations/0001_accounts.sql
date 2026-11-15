@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   approved_at TEXT,
-  approved_by TEXT REFERENCES users(id),
+  approved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   last_login_at TEXT
 );
 
