@@ -7,7 +7,7 @@ import MyVideosPage from './components/MyVideosPage';
 import ProfilePage from './components/ProfilePage';
 import AdminPage from './components/AdminPage';
 import { api, roleLabel, setUnauthorizedHandler, statusLabel } from './lib/api';
-import type { Industry, User, UserQuota, UserUsage, VideoTemplate } from './types';
+import type { Industry, User, UserQuota, UserUsage, VideoTemplate, VideoTopic } from './types';
 import {
   Aperture,
   ArrowRight,
@@ -86,6 +86,7 @@ export default function App() {
 
   const [templates, setTemplates] = useState<VideoTemplate[]>([]);
   const [industries, setIndustries] = useState<Industry[]>([]);
+  const [topics, setTopics] = useState<VideoTopic[]>([]);
 
   // Studio launch context
   const [studioProductId, setStudioProductId] = useState<string>('');
@@ -122,12 +123,14 @@ export default function App() {
 
   const refreshCatalog = async () => {
     try {
-      const [tRes, iRes] = await Promise.all([
+      const [tRes, iRes, topicRes] = await Promise.all([
         api<{ templates: VideoTemplate[] }>('/api/templates'),
         api<{ industries: Industry[] }>('/api/industries'),
+        api<{ topics: VideoTopic[] }>('/api/topics'),
       ]);
       setTemplates(tRes.templates || []);
       setIndustries(iRes.industries || []);
+      setTopics(topicRes.topics || []);
     } catch {
       // Fallback safely
     }
@@ -568,7 +571,8 @@ export default function App() {
                 initialProjectId={studioProjectId}
                 onGoProducts={() => navigate('/products')}
                 onGoMyVideos={() => navigate('/my-videos')}
-              />
+              topics={topics}
+            />
             )}
             {route === '/my-videos' && (
               <MyVideosPage
@@ -587,7 +591,7 @@ export default function App() {
             )}
             {route === '/admin' && (
               ['SUPER_ADMIN', 'ADMIN'].includes(user.role) ? (
-                <AdminPage actor={user} onRefreshCatalog={refreshCatalog} />
+                <AdminPage actor={user} topics={topics} onRefreshCatalog={refreshCatalog} />
               ) : (
                 <div className="workspace-page">
                   <div className="panel-card banner-alert error">
