@@ -693,7 +693,11 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                   </label>
                   <label className="field-label">
                     Chủ đề video
-                    <input value={newTplType} onChange={e => setNewTplType(e.target.value)} />
+                    <select value={newTplType} onChange={e => setNewTplType(e.target.value)}>
+                      {(topics.length ? topics.map(topic => topic.name) : ['Advertisement', 'Product Review', 'Product Showcase', 'TikTok Viral', 'Unboxing', 'Lifestyle', 'Comparison', 'How-to', 'Before & After', 'Storytelling', 'Luxury Commercial', 'Educational']).map(topic => (
+                        <option key={topic} value={topic}>{topic}</option>
+                      ))}
+                    </select>
                   </label>
                   <label className="field-label">
                     Ngành hàng
@@ -779,7 +783,7 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                     <Plus size={15} /> Thêm chủ đề
                   </button>
                 </div>
-                <div className="chip-list">
+                <div className="btn-row">
                   {topics.map(topic => <span className="pill-badge" key={topic.id}>{topic.name}</span>)}
                 </div>
               </section>
