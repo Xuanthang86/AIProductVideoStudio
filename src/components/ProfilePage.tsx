@@ -16,7 +16,7 @@ export default function ProfilePage({ user, quota, usage, onUserUpdated, onLogou
   const [fullName, setFullName] = useState(user.fullName);
   const [phone, setPhone] = useState(user.phone || '');
   const [purpose, setPurpose] = useState(user.purpose || '');
-  const [passwordSectionOpen, setPasswordSectionOpen] = useState(false);
+  const [passwordSectionOpen, setPasswordSectionOpen] = useState(true);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
