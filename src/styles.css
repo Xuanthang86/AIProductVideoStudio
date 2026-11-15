@@ -57,6 +57,7 @@ button {
   display: flex;
   flex-direction: column;
   overflow-x: clip;
+  padding-top: 76px;
 }
 
 /* Header / Topbar */
@@ -69,8 +70,11 @@ button {
   gap: 20px;
   background: var(--chrome-bg);
   border-bottom: 1px solid var(--chrome-line);
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
   z-index: 30;
 }
 
@@ -2637,6 +2641,10 @@ main,
 }
 
 @media (max-width: 680px) {
+  .app-shell {
+    padding-top: 66px;
+  }
+
   .topbar {
     height: 66px;
     padding: 0 12px;
