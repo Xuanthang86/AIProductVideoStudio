@@ -1,20 +1,22 @@
 import { useMemo, useState } from 'react';
 import { ArrowRight, Clock, Film, MonitorPlay } from 'lucide-react';
-import type { Industry, VideoTemplate } from '../types';
+import type { Industry, VideoTemplate, VideoTopic } from '../types';
 
 interface Props {
   templates: VideoTemplate[];
   industries: Industry[];
+  topics: VideoTopic[];
   onUseTemplate: (template: VideoTemplate) => void;
 }
 
-export default function TemplatesPage({ templates, industries, onUseTemplate }: Props) {
+export default function TemplatesPage({ templates, industries, topics, onUseTemplate }: Props) {
   const [industryFilter, setIndustryFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
 
   const videoTypes = useMemo(() => {
-    return Array.from(new Set(templates.map(t => t.videoType)));
-  }, [templates]);
+    const catalog = topics.map(topic => topic.name);
+    return catalog.length ? catalog : Array.from(new Set(templates.map(t => t.videoType)));
+  }, [topics, templates]);
 
   const filtered = useMemo(() => {
     return templates.filter(t => {
