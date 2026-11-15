@@ -40,6 +40,14 @@ export interface Industry {
   sort_order: number;
 }
 
+export interface VideoTopic {
+  id: string;
+  slug: string;
+  name: string;
+  is_active: number;
+  sort_order: number;
+}
+
 export interface VideoTemplate {
   id: string;
   slug: string;
