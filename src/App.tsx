@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import AuthPanel from './AuthPanel';
 import { Aperture, ArrowRight, BadgeCheck, Clapperboard, Film, ImagePlus, LayoutTemplate, Menu, MonitorPlay, Play, ShieldCheck, Sparkles, WandSparkles, X } from 'lucide-react';
 
 const formats = [
@@ -18,7 +17,6 @@ export default function App() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [selected, setSelected] = useState('Video quảng cáo');
   const [notice, setNotice] = useState('');
-  const [authOpen, setAuthOpen] = useState(false);
 
   const nav = ['Tổng quan', 'Tạo video', 'Video của tôi', 'Mẫu video'];
   const goCreate = () => {
@@ -38,7 +36,7 @@ export default function App() {
         <nav className={mobileMenu ? 'main-nav open' : 'main-nav'}>
           {nav.map(item => <button key={item} className={active === item ? 'nav-link active' : 'nav-link'} onClick={() => { setActive(item); setMobileMenu(false); }}>{item}</button>)}
         </nav>
-        <div className="top-actions"><span className="free-pill"><span /> FREE-FIRST</span><button className="login-btn" onClick={() => setAuthOpen(true)}>Đăng nhập</button></div>
+        <div className="top-actions"><span className="free-pill"><span /> FREE-FIRST</span><button className="login-btn" onClick={() => setNotice('Chức năng đăng nhập và đăng ký sẽ được triển khai cùng hệ thống duyệt tài khoản.')}>Đăng nhập</button></div>
       </header>
 
       <main>
@@ -77,7 +75,6 @@ export default function App() {
         </section>
         {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Đóng thông báo"><X size={16} /></button></div>}
       </main>
-      <AuthPanel open={authOpen} onClose={() => setAuthOpen(false)} />
       <footer className="footer"><a className="brand footer-brand" href="#"><span className="brand-mark"><Aperture size={19} /></span><span className="brand-copy"><strong>AI PRODUCT</strong><small>VIDEO STUDIO</small></span></a><span>Nền tảng sáng tạo video sản phẩm đa ngành hàng.</span><small>© {new Date().getFullYear()} AI Product Video Studio</small></footer>
     </div>
   );
