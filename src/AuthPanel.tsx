@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, Ban, Check, KeyRound, LockKeyhole, LogIn, LogOut, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
+import { ArrowRight, Ban, Check, KeyRound, LogIn, LogOut, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
 import PasswordInput from './components/PasswordInput';
 import { api, roleLabel, statusLabel } from './lib/api';
 import type { User, UserQuota, UserUsage } from './types';
@@ -247,7 +247,6 @@ export default function AuthPanel({
           </span>
           <div>
             <b>AI Product Video Studio</b>
-            <small>Tài khoản & Bảo mật</small>
           </div>
         </div>
         {!inline && (
@@ -402,11 +401,8 @@ export default function AuthPanel({
                       checked={rememberLogin}
                       onChange={e => handleRememberChange(e.target.checked)}
                     />
-                    <span>Ghi nhớ mật khẩu trên thiết bị này</span>
+                    <span>Ghi nhớ mật khẩu</span>
                   </label>
-                  <small className="remember-hint">
-                    Lưu tên đăng nhập trên trình duyệt và dùng trình quản lý mật khẩu an toàn của thiết bị.
-                  </small>
                 </div>
               </>
             )}
@@ -420,11 +416,6 @@ export default function AuthPanel({
               {busy ? 'Đang xử lý...' : mode === 'login' ? 'Đăng nhập' : 'Đăng ký tài khoản'}
             </button>
           </form>
-
-          <div className="auth-security">
-            <LockKeyhole size={16} />
-            <span>Mật khẩu được băm PBKDF2-SHA256; phiên đăng nhập dùng cookie HttpOnly bảo mật.</span>
-          </div>
         </div>
       ) : (
         <div className="auth-content">
