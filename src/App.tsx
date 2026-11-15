@@ -70,6 +70,11 @@ function normalizePath(pathname: string): string {
 
 const PROTECTED_ROUTES = ['/studio', '/my-videos', '/products', '/profile', '/admin'];
 
+const AUTH_ACTIVITY_KEY = 'aivideo:last-activity';
+const AUTH_BACKGROUND_KEY = 'aivideo:background-at';
+const BACKGROUND_LOGOUT_MS = 10 * 60 * 1000;
+const IDLE_LOGOUT_MS = 45 * 60 * 1000;
+
 export default function App() {
   const [route, setRoute] = useState<string>(() => normalizePath(window.location.pathname));
   const [mobileMenu, setMobileMenu] = useState(false);
@@ -108,6 +113,37 @@ export default function App() {
 
   const refreshAuth = async () => {
     try {
+      // If the app was closed or left in the background for 10+ minutes,
+      // revoke the server session before restoring the account.
+      let backgroundAt = 0;
+      try {
+        backgroundAt = Number(window.localStorage.getItem(AUTH_BACKGROUND_KEY) || 0);
+      } catch {
+        // Continue with server-side session validation if browser storage is unavailable.
+      }
+      if (backgroundAt && Date.now() - backgroundAt >= BACKGROUND_LOGOUT_MS) {
+        try {
+          await api('/api/auth/logout', 'POST', {});
+        } catch {
+          // The local session is still cleared even if the network is unavailable.
+        }
+        try {
+          window.localStorage.removeItem(AUTH_BACKGROUND_KEY);
+          window.localStorage.removeItem(AUTH_ACTIVITY_KEY);
+        } catch {
+          // Ignore unavailable browser storage.
+        }
+        setUser(null);
+        setQuota(null);
+        setUsage(null);
+        return;
+      }
+      try {
+        window.localStorage.removeItem(AUTH_BACKGROUND_KEY);
+        window.localStorage.setItem(AUTH_ACTIVITY_KEY, String(Date.now()));
+      } catch {
+        // Session validation remains available without local storage.
+      }
       const res = await api<{ user: User | null; quota?: UserQuota; usage?: UserUsage }>('/api/auth/me');
       setUser(res.user);
       setQuota(res.quota || null);
@@ -183,6 +219,17 @@ export default function App() {
     setQuota(nextQuota ?? null);
     setUsage(nextUsage ?? null);
     setAuthChecked(true);
+    try {
+      if (nextUser) {
+        window.localStorage.setItem(AUTH_ACTIVITY_KEY, String(Date.now()));
+        window.localStorage.removeItem(AUTH_BACKGROUND_KEY);
+      } else {
+        window.localStorage.removeItem(AUTH_ACTIVITY_KEY);
+        window.localStorage.removeItem(AUTH_BACKGROUND_KEY);
+      }
+    } catch {
+      // Browser storage is optional; authentication remains server-validated.
+    }
     if (!nextUser) {
       setAccountMenuOpen(false);
     }
@@ -194,6 +241,12 @@ export default function App() {
     } catch {
       // Clear local state regardless
     }
+    try {
+      window.localStorage.removeItem(AUTH_ACTIVITY_KEY);
+      window.localStorage.removeItem(AUTH_BACKGROUND_KEY);
+    } catch {
+      // Ignore unavailable browser storage.
+    }
     setUser(null);
     setQuota(null);
     setUsage(null);
@@ -202,6 +255,82 @@ export default function App() {
       navigate('/');
     }
   };
+
+  useEffect(() => {
+    if (!user) return;
+
+    let lastActivityWrite = 0;
+    let logoutStarted = false;
+    const markActivity = () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      // Throttle storage writes while still recording genuine user interaction.
+      if (now - lastActivityWrite < 3000) return;
+      lastActivityWrite = now;
+      try {
+        window.localStorage.setItem(AUTH_ACTIVITY_KEY, String(now));
+        window.localStorage.removeItem(AUTH_BACKGROUND_KEY);
+      } catch {
+        // Inactivity enforcement still runs in this tab if storage is unavailable.
+      }
+    };
+
+    const markBackground = () => {
+      try {
+        window.localStorage.setItem(AUTH_BACKGROUND_KEY, String(Date.now()));
+      } catch {
+        // Ignore unavailable browser storage.
+      }
+    };
+
+    const checkTimeouts = () => {
+      if (logoutStarted) return;
+      const now = Date.now();
+      let backgroundAt = 0;
+      let lastActivity = now;
+      try {
+        backgroundAt = Number(window.localStorage.getItem(AUTH_BACKGROUND_KEY) || 0);
+        lastActivity = Number(window.localStorage.getItem(AUTH_ACTIVITY_KEY) || now);
+      } catch {
+        // Fall back to the current tab's in-memory activity timer.
+      }
+      if (backgroundAt && now - backgroundAt >= BACKGROUND_LOGOUT_MS) {
+        logoutStarted = true;
+        void handleLogout();
+        return;
+      }
+      if (now - lastActivity >= IDLE_LOGOUT_MS) {
+        logoutStarted = true;
+        void handleLogout();
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        markBackground();
+      } else {
+        checkTimeouts();
+        if (!logoutStarted) markActivity();
+      }
+    };
+    const onPageHide = () => markBackground();
+    const activityEvents: Array<keyof WindowEventMap> = [
+      'pointerdown', 'keydown', 'touchstart', 'scroll', 'mousemove',
+    ];
+    activityEvents.forEach(eventName => window.addEventListener(eventName, markActivity, { passive: true }));
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', onPageHide);
+    const timer = window.setInterval(checkTimeouts, 10000);
+
+    // Start a fresh inactivity window after authentication is restored.
+    markActivity();
+    return () => {
+      window.clearInterval(timer);
+      activityEvents.forEach(eventName => window.removeEventListener(eventName, markActivity));
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', onPageHide);
+    };
+  }, [user]);
 
   const navItems: Array<{ label: string; path: string; adminOnly?: boolean }> = [
     { label: 'Tổng quan', path: '/' },
