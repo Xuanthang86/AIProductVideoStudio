@@ -13,8 +13,12 @@ export default function TemplatesPage({ templates, industries, topics, onUseTemp
   const [industryFilter, setIndustryFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
 
+  const industryOptions = useMemo(
+    () => Array.from(new Map(industries.map(industry => [industry.name, industry])).values()),
+    [industries]
+  );
   const videoTypes = useMemo(() => {
-    const catalog = topics.map(topic => topic.name);
+    const catalog = Array.from(new Set(topics.map(topic => topic.name).filter(Boolean)));
     return catalog.length ? catalog : Array.from(new Set(templates.map(t => t.videoType)));
   }, [topics, templates]);
 
@@ -40,8 +44,8 @@ export default function TemplatesPage({ templates, industries, topics, onUseTemp
         <label className="filter-control">
           Ngành hàng
           <select value={industryFilter} onChange={e => setIndustryFilter(e.target.value)}>
-            <option value="ALL">Tất cả ngành hàng ({industries.length})</option>
-            {industries.map(ind => (
+            <option value="ALL">Tất cả ngành hàng ({industryOptions.length})</option>
+            {industryOptions.map(ind => (
               <option key={ind.id} value={ind.name}>
                 {ind.name}
               </option>
