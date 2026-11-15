@@ -139,8 +139,12 @@ async function passwordHash(password: string, salt: string, iterations = 100000)
 async function verifyPassword(password: string, salt: string, expected: string) {
   const current = await passwordHash(password, salt, 100000);
   if (current === expected) return true;
-  const legacy = await passwordHash(password, salt, 310000);
-  return legacy === expected;
+  try {
+    const legacy = await passwordHash(password, salt, 310000);
+    return legacy === expected;
+  } catch {
+    return false;
+  }
 }
 
 function cookie(request: Request, name: string) {
@@ -153,20 +157,30 @@ function isHttpsRequest(request: Request) {
   return new URL(request.url).protocol === 'https:';
 }
 
+function isIframeRequest(request: Request) {
+  return request.headers.get('sec-fetch-dest') === 'iframe';
+}
+
 function sessionToken(request: Request) {
   return cookie(request, '__Host-avs_session') || cookie(request, 'avs_session');
 }
 
-function cookieHeader(value: string, maxAge: number, isHttps: boolean) {
+function cookieHeader(value: string, maxAge: number, isHttps: boolean, isIframe = false) {
   if (isHttps) {
-    return `__Host-avs_session=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=${maxAge}`;
+    if (isIframe) {
+      return `__Host-avs_session=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=${maxAge}`;
+    }
+    return `__Host-avs_session=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
   }
   return `avs_session=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
 }
 
-function clearCookie(isHttps: boolean) {
+function clearCookie(isHttps: boolean, isIframe = false) {
   if (isHttps) {
-    return '__Host-avs_session=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0';
+    if (isIframe) {
+      return '__Host-avs_session=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0';
+    }
+    return '__Host-avs_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
   }
   return 'avs_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
 }
@@ -174,8 +188,10 @@ function clearCookie(isHttps: boolean) {
 function originAllowed(request: Request, env: Env) {
   const origin = request.headers.get('origin');
   if (!origin) return request.method === 'GET' || request.method === 'HEAD';
-  const expected = env.APP_ORIGIN || new URL(request.url).origin;
-  return origin === expected;
+  const reqOrigin = new URL(request.url).origin;
+  if (origin === reqOrigin) return true;
+  if (env.APP_ORIGIN && origin === env.APP_ORIGIN) return true;
+  return false;
 }
 
 async function body(request: Request) {
@@ -664,7 +680,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       return json(
         { user: publicUser(user), quota, usage },
         200,
-        { 'set-cookie': cookieHeader(session.token, session.maxAge, isHttpsRequest(request)) }
+        { 'set-cookie': cookieHeader(session.token, session.maxAge, isHttpsRequest(request), isIframeRequest(request)) }
       );
     }
 
@@ -673,13 +689,18 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const token = sessionToken(request);
       if (token) await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await digest(token)).run();
       if (actor) await audit(env, actor.id, actor.id, 'LOGOUT');
-      return json({ message: 'Đã đăng xuất.' }, 200, { 'set-cookie': clearCookie(isHttpsRequest(request)) });
+      return json({ message: 'Đã đăng xuất.' }, 200, { 'set-cookie': clearCookie(isHttpsRequest(request), isIframeRequest(request)) });
     }
 
     if (path === '/api/auth/me' && request.method === 'GET') {
       const user = await currentUser(request, env);
       if (!user) {
-        return json({ user: null }, 200, { 'set-cookie': clearCookie(isHttpsRequest(request)) });
+        const hadToken = Boolean(sessionToken(request));
+        return json(
+          { user: null },
+          200,
+          hadToken ? { 'set-cookie': clearCookie(isHttpsRequest(request), isIframeRequest(request)) } : {}
+        );
       }
       const quota = await getOrCreateQuota(env, user.id);
       const usage = await getUserVideoUsage(env, user.id);
@@ -712,6 +733,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const next = str(data.newPassword);
       if (!current) return fail('Vui lòng nhập mật khẩu hiện tại.');
       if (next.length < 12 || next.length > 128) return fail('Mật khẩu mới phải có ít nhất 12 ký tự.');
+      if (data.confirmNewPassword !== undefined && str(data.confirmNewPassword) !== next) {
+        return fail('Mật khẩu mới và xác nhận mật khẩu chưa khớp.');
+      }
       const row = await env.DB.prepare('SELECT password_hash,password_salt FROM users WHERE id=?')
         .bind(actor.id)
         .first<{ password_hash: string; password_salt: string }>();
@@ -730,7 +754,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       return json(
         { message: 'Đổi mật khẩu thành công.' },
         200,
-        { 'set-cookie': cookieHeader(session.token, session.maxAge, isHttpsRequest(request)) }
+        { 'set-cookie': cookieHeader(session.token, session.maxAge, isHttpsRequest(request), isIframeRequest(request)) }
       );
     }
 

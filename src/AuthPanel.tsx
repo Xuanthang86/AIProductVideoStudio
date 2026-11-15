@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
-import { LockKeyhole, LogIn, LogOut, ShieldCheck, UserPlus, Users, X, Check, Ban, KeyRound, ArrowRight } from 'lucide-react';
+import { ArrowRight, Ban, Check, KeyRound, LockKeyhole, LogIn, LogOut, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
+import PasswordInput from './components/PasswordInput';
 import { api, roleLabel, statusLabel } from './lib/api';
 import type { User, UserQuota, UserUsage } from './types';
 
+const REMEMBER_LOGIN_KEY = 'avs_remember_login';
+const SAVED_IDENTIFIER_KEY = 'avs_saved_identifier';
+
 type Props = {
   open: boolean;
+  currentUser?: User | null;
   initialMode?: 'login' | 'register' | 'account';
   inline?: boolean;
   onClose: () => void;
@@ -12,11 +17,36 @@ type Props = {
   onNavigate?: (path: string) => void;
 };
 
-export default function AuthPanel({ open, initialMode = 'login', inline = false, onClose, onAuthChange, onNavigate }: Props) {
+export default function AuthPanel({
+  open,
+  currentUser,
+  initialMode = 'login',
+  inline = false,
+  onClose,
+  onAuthChange,
+  onNavigate,
+}: Props) {
   const [mode, setMode] = useState<'login' | 'register' | 'account'>(initialMode);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(currentUser ?? null);
   const [users, setUsers] = useState<User[]>([]);
-  const [identifier, setIdentifier] = useState('');
+
+  const [rememberLogin, setRememberLogin] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(REMEMBER_LOGIN_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [identifier, setIdentifier] = useState<string>(() => {
+    try {
+      return localStorage.getItem(REMEMBER_LOGIN_KEY) === '1'
+        ? localStorage.getItem(SAVED_IDENTIFIER_KEY) || ''
+        : '';
+    } catch {
+      return '';
+    }
+  });
+
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
@@ -39,24 +69,37 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
   };
 
   useEffect(() => {
-    if (open) {
-      setError('');
-      setMessage('');
-      setMode(initialMode);
-      api<{ user: User | null; quota?: UserQuota; usage?: UserUsage }>('/api/auth/me')
-        .then(r => {
-          if (r.user) {
-            setUser(r.user);
-            setMode('account');
-            onAuthChange?.(r.user, r.quota || null, r.usage || null);
-          } else {
-            setUser(null);
-            setMode(initialMode === 'account' ? 'login' : initialMode);
-          }
-        })
-        .catch(() => {});
+    if (currentUser !== undefined) {
+      setUser(currentUser);
+      if (!currentUser && mode === 'account') {
+        setMode(initialMode === 'register' ? 'register' : 'login');
+      }
     }
-  }, [open, initialMode]);
+  }, [currentUser, initialMode, mode]);
+
+  useEffect(() => {
+    if (!open) return;
+    setError('');
+    setMessage('');
+    if (currentUser) {
+      setUser(currentUser);
+      setMode('account');
+      return;
+    }
+    setMode(initialMode === 'account' ? 'login' : initialMode);
+    api<{ user: User | null; quota?: UserQuota; usage?: UserUsage }>('/api/auth/me')
+      .then(r => {
+        if (r.user) {
+          setUser(r.user);
+          setMode('account');
+          onAuthChange?.(r.user, r.quota || null, r.usage || null);
+        } else {
+          setUser(null);
+          setMode(initialMode === 'account' ? 'login' : initialMode);
+        }
+      })
+      .catch(() => {});
+  }, [open, initialMode, currentUser]);
 
   useEffect(() => {
     if (open && user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role)) {
@@ -79,9 +122,27 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
     }
   };
 
+  const handleRememberChange = (checked: boolean) => {
+    setRememberLogin(checked);
+    try {
+      if (checked) {
+        localStorage.setItem(REMEMBER_LOGIN_KEY, '1');
+        if (identifier.trim()) localStorage.setItem(SAVED_IDENTIFIER_KEY, identifier.trim());
+      } else {
+        localStorage.removeItem(REMEMBER_LOGIN_KEY);
+        localStorage.removeItem(SAVED_IDENTIFIER_KEY);
+      }
+    } catch {
+      // Ignore storage errors in restricted environments
+    }
+  };
+
   const submitAuth = () =>
     run(async () => {
       if (mode === 'register') {
+        if (password.length < 12) {
+          throw new Error('Mật khẩu phải có ít nhất 12 ký tự.');
+        }
         const result = await api<{ message: string }>('/api/auth/register', 'POST', {
           fullName,
           email,
@@ -95,16 +156,32 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
         setIdentifier(email);
         setPassword('');
       } else {
+        try {
+          if (rememberLogin) {
+            localStorage.setItem(REMEMBER_LOGIN_KEY, '1');
+            localStorage.setItem(SAVED_IDENTIFIER_KEY, identifier.trim());
+          } else {
+            localStorage.removeItem(REMEMBER_LOGIN_KEY);
+            localStorage.removeItem(SAVED_IDENTIFIER_KEY);
+          }
+        } catch {
+          // Ignore storage errors
+        }
+
         const result = await api<{ user: User; quota?: UserQuota; usage?: UserUsage }>('/api/auth/login', 'POST', {
           identifier,
           email: identifier,
           password,
         });
         setUser(result.user);
-        setMode('account');
         setPassword('');
         setMessage('Đăng nhập thành công.');
         onAuthChange?.(result.user, result.quota || null, result.usage || null);
+        if (!inline) {
+          onClose();
+        } else {
+          setMode('account');
+        }
       }
     });
 
@@ -131,14 +208,24 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
   const canManage = (target: User) =>
     user?.role === 'SUPER_ADMIN' || (user?.role === 'ADMIN' && ['EDITOR', 'USER'].includes(target.role));
 
+  const passwordMismatch = confirmNewPassword.length > 0 && newPassword !== confirmNewPassword;
+  const passwordTooShort = newPassword.length > 0 && newPassword.length < 12;
+
   const changePassword = () =>
     run(async () => {
+      if (!currentPassword) {
+        throw new Error('Vui lòng nhập mật khẩu hiện tại.');
+      }
+      if (newPassword.length < 12) {
+        throw new Error('Mật khẩu mới phải có ít nhất 12 ký tự.');
+      }
       if (newPassword !== confirmNewPassword) {
         throw new Error('Xác nhận mật khẩu mới chưa khớp.');
       }
       const r = await api<{ message: string }>('/api/auth/change-password', 'POST', {
         currentPassword,
         newPassword,
+        confirmNewPassword,
       });
       setCurrentPassword('');
       setNewPassword('');
@@ -147,19 +234,24 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
     });
 
   const panelContent = (
-    <section className={inline ? 'auth-panel auth-panel-inline' : 'auth-panel'} role="dialog" aria-modal={!inline} aria-label="Tài khoản">
+    <section
+      className={inline ? 'auth-panel auth-panel-inline' : 'auth-panel'}
+      role={inline ? undefined : 'dialog'}
+      aria-modal={!inline || undefined}
+      aria-label="Tài khoản"
+    >
       <div className="auth-head">
         <div className="auth-brand">
           <span>
             <ShieldCheck size={19} />
           </span>
           <div>
-            <b>AI PRODUCT VIDEO STUDIO</b>
-            <small>TÀI KHOẢN & BẢO MẬT</small>
+            <b>AI Product Video Studio</b>
+            <small>Tài khoản & Bảo mật</small>
           </div>
         </div>
         {!inline && (
-          <button className="auth-close" onClick={onClose} aria-label="Đóng">
+          <button type="button" className="auth-close" onClick={onClose} aria-label="Đóng">
             <X size={18} />
           </button>
         )}
@@ -167,8 +259,11 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
 
       {!user ? (
         <div className="auth-content">
-          <div className="auth-tabs">
+          <div className="auth-tabs" role="tablist">
             <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'login'}
               className={mode === 'login' ? 'selected' : ''}
               onClick={() => {
                 setMode('login');
@@ -178,6 +273,9 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
               Đăng nhập
             </button>
             <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'register'}
               className={mode === 'register' ? 'selected' : ''}
               onClick={() => {
                 setMode('register');
@@ -188,88 +286,144 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
             </button>
           </div>
 
-          <h2>{mode === 'login' ? 'Chào mừng trở lại' : 'Tạo tài khoản mới'}</h2>
+          <h2>{mode === 'login' ? 'Đăng nhập tài khoản' : 'Tạo tài khoản mới'}</h2>
           <p className="auth-intro">
             {mode === 'login'
-              ? 'Đăng nhập bằng email hoặc tên đăng nhập của tài khoản đã được phê duyệt.'
-              : 'Tài khoản mới cần được Admin hoặc Super Admin phê duyệt trước khi sử dụng Studio.'}
+              ? 'Sử dụng email hoặc tên đăng nhập đã được quản trị viên phê duyệt.'
+              : 'Tài khoản sau khi đăng ký sẽ ở trạng thái chờ Admin hoặc Super Admin phê duyệt.'}
           </p>
 
-          {mode === 'register' ? (
-            <>
-              <label>
-                Họ và tên *
-                <input value={fullName} onChange={e => setFullName(e.target.value)} autoComplete="name" placeholder="Nguyễn Văn A" />
-              </label>
-              <div className="password-grid">
-                <label>
-                  Email *
-                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" placeholder="email@example.com" />
-                </label>
-                <label>
-                  Tên đăng nhập
-                  <input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" placeholder="nguyenvana" />
-                </label>
-              </div>
-              <div className="password-grid">
-                <label>
-                  Số điện thoại (không bắt buộc)
-                  <input value={phone} onChange={e => setPhone(e.target.value)} autoComplete="tel" placeholder="09xx xxx xxx" />
-                </label>
-                <label>
-                  Mục đích sử dụng
-                  <input value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="Bán hàng online, quảng cáo sản phẩm..." />
-                </label>
-              </div>
-              <label>
-                Mật khẩu *
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoComplete="new-password"
-                  placeholder="Tối thiểu 12 ký tự"
-                />
-              </label>
-            </>
-          ) : (
-            <>
-              <label>
-                Email hoặc tên đăng nhập
-                <input
-                  value={identifier}
-                  onChange={e => setIdentifier(e.target.value)}
-                  autoComplete="username"
-                  placeholder="email@example.com hoặc username"
-                />
-              </label>
-              <label>
-                Mật khẩu
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  placeholder="Nhập mật khẩu"
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && identifier && password) submitAuth();
-                  }}
-                />
-              </label>
-            </>
-          )}
-
-          <button
-            className="auth-submit"
-            disabled={busy || !password || (mode === 'login' ? !identifier : !email || !fullName)}
-            onClick={submitAuth}
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              submitAuth();
+            }}
           >
-            {mode === 'login' ? <LogIn size={17} /> : <UserPlus size={17} />}
-            {mode === 'login' ? 'Đăng nhập' : 'Đăng ký tài khoản'}
-          </button>
+            {mode === 'register' ? (
+              <>
+                <label>
+                  Họ và tên *
+                  <input
+                    name="name"
+                    value={fullName}
+                    onChange={e => setFullName(e.target.value)}
+                    autoComplete="name"
+                    placeholder="Nguyễn Văn A"
+                    required
+                  />
+                </label>
+                <div className="password-grid">
+                  <label>
+                    Email *
+                    <input
+                      type="email"
+                      name="email"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      autoComplete="email"
+                      placeholder="email@example.com"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Tên đăng nhập
+                    <input
+                      name="username"
+                      value={username}
+                      onChange={e => setUsername(e.target.value)}
+                      autoComplete="username"
+                      placeholder="nguyenvana"
+                    />
+                  </label>
+                </div>
+                <div className="password-grid">
+                  <label>
+                    Số điện thoại (không bắt buộc)
+                    <input
+                      name="tel"
+                      value={phone}
+                      onChange={e => setPhone(e.target.value)}
+                      autoComplete="tel"
+                      placeholder="09xx xxx xxx"
+                    />
+                  </label>
+                  <label>
+                    Mục đích sử dụng
+                    <input
+                      name="purpose"
+                      value={purpose}
+                      onChange={e => setPurpose(e.target.value)}
+                      placeholder="Bán hàng, giới thiệu sản phẩm..."
+                    />
+                  </label>
+                </div>
+                <label>
+                  Mật khẩu *
+                  <PasswordInput
+                    name="password"
+                    value={password}
+                    onValueChange={setPassword}
+                    autoComplete="new-password"
+                    placeholder="Tối thiểu 12 ký tự"
+                    clearAriaLabel="Xóa mật khẩu đăng ký"
+                    required
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <label>
+                  Email hoặc tên đăng nhập
+                  <input
+                    name="username"
+                    value={identifier}
+                    onChange={e => setIdentifier(e.target.value)}
+                    autoComplete="username"
+                    placeholder="email@example.com hoặc tên đăng nhập"
+                    required
+                  />
+                </label>
+                <label>
+                  Mật khẩu
+                  <PasswordInput
+                    name="password"
+                    value={password}
+                    onValueChange={setPassword}
+                    autoComplete="current-password"
+                    placeholder="Nhập mật khẩu"
+                    clearAriaLabel="Xóa mật khẩu đăng nhập"
+                    required
+                  />
+                </label>
+                <div className="remember-row">
+                  <label className="remember-check">
+                    <input
+                      type="checkbox"
+                      checked={rememberLogin}
+                      onChange={e => handleRememberChange(e.target.checked)}
+                    />
+                    <span>Ghi nhớ mật khẩu trên thiết bị này</span>
+                  </label>
+                  <small className="remember-hint">
+                    Lưu tên đăng nhập trên trình duyệt và dùng trình quản lý mật khẩu an toàn của thiết bị.
+                  </small>
+                </div>
+              </>
+            )}
+
+            <button
+              type="submit"
+              className="auth-submit"
+              disabled={busy || !password || (mode === 'login' ? !identifier.trim() : !email.trim() || !fullName.trim())}
+            >
+              {mode === 'login' ? <LogIn size={17} /> : <UserPlus size={17} />}
+              {busy ? 'Đang xử lý...' : mode === 'login' ? 'Đăng nhập' : 'Đăng ký tài khoản'}
+            </button>
+          </form>
 
           <div className="auth-security">
-            <LockKeyhole size={15} /> Mật khẩu được băm PBKDF2-HMAC-SHA256; phiên đăng nhập dùng cookie HttpOnly bảo mật.
+            <LockKeyhole size={16} />
+            <span>Mật khẩu được băm PBKDF2-SHA256; phiên đăng nhập dùng cookie HttpOnly bảo mật.</span>
           </div>
         </div>
       ) : (
@@ -292,15 +446,17 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
           {onNavigate && (
             <div className="auth-quick-nav">
               <button
+                type="button"
                 className="auth-secondary"
                 onClick={() => {
                   onClose();
                   onNavigate('/studio');
                 }}
               >
-                Vào Video Studio <ArrowRight size={14} />
+                Vào Video Studio <ArrowRight size={15} />
               </button>
               <button
+                type="button"
                 className="auth-secondary"
                 onClick={() => {
                   onClose();
@@ -311,6 +467,7 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
               </button>
               {['SUPER_ADMIN', 'ADMIN'].includes(user.role) && (
                 <button
+                  type="button"
                   className="auth-secondary"
                   onClick={() => {
                     onClose();
@@ -326,43 +483,54 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
           <div className="auth-section-title">
             <KeyRound size={17} /> Đổi mật khẩu cá nhân
           </div>
-          <div className="password-grid">
-            <label>
-              Mật khẩu hiện tại *
-              <input
-                type="password"
-                value={currentPassword}
-                onChange={e => setCurrentPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-            </label>
-            <label>
-              Mật khẩu mới *
-              <input
-                type="password"
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                autoComplete="new-password"
-                placeholder="Tối thiểu 12 ký tự"
-              />
-            </label>
-          </div>
-          <label>
-            Xác nhận mật khẩu mới *
-            <input
-              type="password"
-              value={confirmNewPassword}
-              onChange={e => setConfirmNewPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </label>
-          <button
-            className="auth-secondary"
-            disabled={busy || !currentPassword || newPassword.length < 12 || newPassword !== confirmNewPassword}
-            onClick={changePassword}
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              changePassword();
+            }}
           >
-            Cập nhật mật khẩu
-          </button>
+            <div className="password-grid">
+              <label>
+                Mật khẩu hiện tại *
+                <PasswordInput
+                  value={currentPassword}
+                  onValueChange={setCurrentPassword}
+                  autoComplete="current-password"
+                  placeholder="Nhập mật khẩu hiện tại"
+                  clearAriaLabel="Xóa mật khẩu hiện tại"
+                />
+              </label>
+              <label>
+                Mật khẩu mới *
+                <PasswordInput
+                  value={newPassword}
+                  onValueChange={setNewPassword}
+                  autoComplete="new-password"
+                  placeholder="Tối thiểu 12 ký tự"
+                  clearAriaLabel="Xóa mật khẩu mới"
+                />
+              </label>
+            </div>
+            <label>
+              Xác nhận mật khẩu mới *
+              <PasswordInput
+                value={confirmNewPassword}
+                onValueChange={setConfirmNewPassword}
+                autoComplete="new-password"
+                placeholder="Nhập lại mật khẩu mới"
+                clearAriaLabel="Xóa xác nhận mật khẩu mới"
+              />
+            </label>
+            {passwordTooShort && <p className="field-error-note">Mật khẩu mới cần tối thiểu 12 ký tự.</p>}
+            {passwordMismatch && <p className="field-error-note">Mật khẩu xác nhận chưa khớp với mật khẩu mới.</p>}
+            <button
+              type="submit"
+              className="auth-secondary"
+              disabled={busy || !currentPassword || newPassword.length < 12 || newPassword !== confirmNewPassword}
+            >
+              Cập nhật mật khẩu
+            </button>
+          </form>
 
           {['SUPER_ADMIN', 'ADMIN'].includes(user.role) && (
             <div className="admin-users">
@@ -392,23 +560,24 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
                         ))}
                       </select>
                       {item.status === 'PENDING_APPROVAL' && (
-                        <button title="Phê duyệt" onClick={() => action(item.id, 'approve')}>
+                        <button type="button" title="Phê duyệt" onClick={() => action(item.id, 'approve')}>
                           <Check size={15} />
                         </button>
                       )}
                       {item.status === 'APPROVED' ? (
-                        <button title="Khóa tài khoản" onClick={() => action(item.id, 'disable')}>
+                        <button type="button" title="Khóa tài khoản" onClick={() => action(item.id, 'disable')}>
                           <Ban size={15} />
                         </button>
                       ) : (
                         item.status !== 'PENDING_APPROVAL' && (
-                          <button title="Mở khóa / duyệt" onClick={() => action(item.id, 'enable')}>
+                          <button type="button" title="Mở khóa / duyệt" onClick={() => action(item.id, 'enable')}>
                             <Check size={15} />
                           </button>
                         )
                       )}
                       {user.role === 'SUPER_ADMIN' && (
                         <button
+                          type="button"
                           title="Đặt lại mật khẩu"
                           onClick={() => {
                             setResetTarget(item);
@@ -421,6 +590,7 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
                       )}
                       {user.role === 'SUPER_ADMIN' && (
                         <button
+                          type="button"
                           title="Xóa tài khoản"
                           onClick={() => {
                             setDeleteTarget(item);
@@ -440,21 +610,23 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
                   <p>
                     Đặt lại mật khẩu cho <b>{resetTarget.email}</b> (không cần mật khẩu cũ):
                   </p>
-                  <input
-                    type="password"
+                  <PasswordInput
                     value={resetPassValue}
-                    onChange={e => setResetPassValue(e.target.value)}
+                    onValueChange={setResetPassValue}
+                    autoComplete="new-password"
                     placeholder="Mật khẩu mới tối thiểu 12 ký tự"
+                    clearAriaLabel="Xóa mật khẩu đặt lại"
                   />
                   <div className="inline-confirm-actions">
                     <button
+                      type="button"
                       className="auth-secondary"
                       disabled={busy || resetPassValue.length < 12}
                       onClick={() => action(resetTarget.id, 'reset-password', { newPassword: resetPassValue })}
                     >
                       Xác nhận đặt lại
                     </button>
-                    <button className="auth-secondary" onClick={() => setResetTarget(null)}>
+                    <button type="button" className="auth-secondary" onClick={() => setResetTarget(null)}>
                       Hủy
                     </button>
                   </div>
@@ -467,10 +639,10 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
                     Xác nhận xóa vĩnh viễn tài khoản <b>{deleteTarget.email}</b>?
                   </p>
                   <div className="inline-confirm-actions">
-                    <button className="auth-logout" onClick={() => action(deleteTarget.id, 'delete')}>
+                    <button type="button" className="auth-logout" onClick={() => action(deleteTarget.id, 'delete')}>
                       Xác nhận xóa
                     </button>
-                    <button className="auth-secondary" onClick={() => setDeleteTarget(null)}>
+                    <button type="button" className="auth-secondary" onClick={() => setDeleteTarget(null)}>
                       Hủy
                     </button>
                   </div>
@@ -479,7 +651,7 @@ export default function AuthPanel({ open, initialMode = 'login', inline = false,
             </div>
           )}
 
-          <button className="auth-logout" disabled={busy} onClick={logout}>
+          <button type="button" className="auth-logout" disabled={busy} onClick={logout}>
             <LogOut size={16} /> Đăng xuất
           </button>
         </div>

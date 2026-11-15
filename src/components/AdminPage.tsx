@@ -19,6 +19,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import PasswordInput from './PasswordInput';
 import { api, formatDate, projectStatusLabel, roleLabel, statusLabel } from '../lib/api';
 import type { AICapabilityModule, Industry, User, VideoTemplate } from '../types';
 
@@ -393,8 +394,8 @@ export default function AdminPage({ actor, onRefreshCatalog }: Props) {
                         </td>
                         <td>
                           {u.role === 'SUPER_ADMIN' ? (
-                            <span className="pill-badge">
-                              <Lock size={11} /> Super Admin (Bảo vệ)
+                            <span className="role-protected-tag">
+                              <Lock size={13} /> Super Admin (Bảo vệ)
                             </span>
                           ) : canManage(u) ? (
                             <select value={u.role} onChange={e => userAction(u.id, 'role', { role: e.target.value })}>
@@ -551,11 +552,12 @@ export default function AdminPage({ actor, onRefreshCatalog }: Props) {
                   <p>
                     Đặt lại mật khẩu mới cho <b>{resetTarget.email}</b> (thao tác Super Admin, sẽ đăng xuất mọi phiên hiện tại):
                   </p>
-                  <input
-                    type="password"
+                  <PasswordInput
                     value={resetPass}
-                    onChange={e => setResetPass(e.target.value)}
+                    onValueChange={setResetPass}
+                    autoComplete="new-password"
                     placeholder="Nhập mật khẩu mới tối thiểu 12 ký tự"
+                    clearAriaLabel="Xóa mật khẩu đặt lại"
                   />
                   <div className="inline-confirm-actions">
                     <button

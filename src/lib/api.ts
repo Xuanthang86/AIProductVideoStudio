@@ -1,3 +1,9 @@
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
 export async function api<T = Record<string, unknown>>(
   path: string,
   method = 'GET',
@@ -11,6 +17,9 @@ export async function api<T = Record<string, unknown>>(
   });
   const result = await response.json().catch(() => ({ error: 'Phản hồi máy chủ không hợp lệ.' }));
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith('/api/auth/login') && !path.startsWith('/api/auth/register')) {
+      unauthorizedHandler?.();
+    }
     throw new Error(result.error || 'Yêu cầu không thành công.');
   }
   return result as T;

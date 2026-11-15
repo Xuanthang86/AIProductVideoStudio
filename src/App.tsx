@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AuthPanel from './AuthPanel';
 import ProductsPage from './components/ProductsPage';
 import TemplatesPage from './components/TemplatesPage';
@@ -6,40 +6,61 @@ import StudioPage from './components/StudioPage';
 import MyVideosPage from './components/MyVideosPage';
 import ProfilePage from './components/ProfilePage';
 import AdminPage from './components/AdminPage';
-import { api } from './lib/api';
+import { api, roleLabel, setUnauthorizedHandler, statusLabel } from './lib/api';
 import type { Industry, User, UserQuota, UserUsage, VideoTemplate } from './types';
 import {
   Aperture,
   ArrowRight,
-  BadgeCheck,
+  CheckCircle2,
+  ChevronDown,
   Clapperboard,
   Film,
+  FolderKanban,
   ImagePlus,
+  KeyRound,
   LayoutTemplate,
+  LogOut,
   Menu,
   MonitorPlay,
+  Package,
   Play,
+  Shield,
   ShieldCheck,
-  Sparkles,
   User as UserIcon,
   WandSparkles,
   X,
 } from 'lucide-react';
 
 const landingFormats = [
-  { name: 'Video quảng cáo', detail: 'Thu hút, làm nổi bật lợi ích sản phẩm', tag: 'Phổ biến' },
-  { name: 'Review sản phẩm', detail: 'Trình bày điểm nổi bật và trải nghiệm', tag: 'Bán hàng' },
-  { name: 'Showcase', detail: 'Tập trung hình ảnh và chi tiết sản phẩm', tag: 'Tối giản' },
-  { name: 'TikTok / Reels', detail: 'Video dọc ngắn, nhịp nhanh', tag: 'Mạng xã hội' },
-  { name: 'Hướng dẫn sử dụng', detail: 'Giải thích tính năng theo từng bước', tag: 'Thông tin' },
-  { name: 'Lifestyle', detail: 'Đặt sản phẩm trong bối cảnh đời sống', tag: 'Sáng tạo' },
+  { name: 'Video quảng cáo', detail: 'Làm nổi bật lợi ích chính và thông điệp bán hàng', tag: 'Phổ biến' },
+  { name: 'Review sản phẩm', detail: 'Trình bày điểm nổi bật và trải nghiệm thực tế', tag: 'Bán hàng' },
+  { name: 'Showcase', detail: 'Tập trung đường nét, chất liệu và chi tiết sản phẩm', tag: 'Tối giản' },
+  { name: 'TikTok / Reels', detail: 'Khung hình dọc 9:16, nhịp cắt gọn và bắt mắt', tag: 'Mạng xã hội' },
+  { name: 'Hướng dẫn sử dụng', detail: 'Giải thích công năng sản phẩm theo từng bước', tag: 'Thông tin' },
+  { name: 'Lifestyle', detail: 'Đặt sản phẩm vào bối cảnh sinh hoạt thường ngày', tag: 'Sáng tạo' },
 ];
 
 const steps = [
-  'Tải ảnh sản phẩm',
-  'Tạo nội dung & kịch bản',
-  'Chọn giọng đọc và phong cách',
-  'Xem trước và xuất video',
+  {
+    title: 'Tải ảnh sản phẩm',
+    desc: 'Lưu trữ tối đa 10 ảnh gốc và thông tin mô tả chi tiết cho từng sản phẩm.',
+    icon: ImagePlus,
+  },
+  {
+    title: 'Phân tích & viết kịch bản',
+    desc: 'Tổng hợp điểm nổi bật, lời thoại, phụ đề và chia thành từng phân cảnh rõ ràng.',
+    icon: WandSparkles,
+  },
+  {
+    title: 'Chọn phong cách & âm thanh',
+    desc: 'Tùy chỉnh chuyển động camera, ánh sáng, nhạc nền và giọng đọc phù hợp.',
+    icon: Aperture,
+  },
+  {
+    title: 'Xem trước & xuất MP4',
+    desc: 'Kiểm tra từng phân cảnh và xuất file video MP4 tương thích đa nền tảng.',
+    icon: MonitorPlay,
+  },
 ];
 
 function normalizePath(pathname: string): string {
@@ -48,9 +69,12 @@ function normalizePath(pathname: string): string {
   return valid.includes(clean) ? clean : '/';
 }
 
+const PROTECTED_ROUTES = ['/studio', '/my-videos', '/products', '/profile', '/admin'];
+
 export default function App() {
   const [route, setRoute] = useState<string>(() => normalizePath(window.location.pathname));
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [selected, setSelected] = useState('Video quảng cáo');
   const [authOpen, setAuthOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register' | 'account'>('login');
@@ -68,6 +92,8 @@ export default function App() {
   const [studioTemplate, setStudioTemplate] = useState<VideoTemplate | null>(null);
   const [studioProjectId, setStudioProjectId] = useState<string>('');
 
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+
   const navigate = (path: string) => {
     const normalized = normalizePath(path);
     if (window.location.pathname !== normalized) {
@@ -75,6 +101,7 @@ export default function App() {
     }
     setRoute(normalized);
     setMobileMenu(false);
+    setAccountMenuOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -86,6 +113,8 @@ export default function App() {
       setUsage(res.usage || null);
     } catch {
       setUser(null);
+      setQuota(null);
+      setUsage(null);
     } finally {
       setAuthChecked(true);
     }
@@ -105,12 +134,74 @@ export default function App() {
   };
 
   useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+      setQuota(null);
+      setUsage(null);
+      setAccountMenuOpen(false);
+    });
     refreshAuth();
     refreshCatalog();
-    const onPop = () => setRoute(normalizePath(window.location.pathname));
+    const onPop = () => {
+      setRoute(normalizePath(window.location.pathname));
+      setAccountMenuOpen(false);
+    };
     window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      setUnauthorizedHandler(null);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAccountMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [accountMenuOpen]);
+
+  const handleAuthChange = (nextUser: User | null, nextQuota?: UserQuota | null, nextUsage?: UserUsage | null) => {
+    setUser(nextUser);
+    setQuota(nextQuota ?? null);
+    setUsage(nextUsage ?? null);
+    setAuthChecked(true);
+    if (!nextUser) {
+      setAccountMenuOpen(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api('/api/auth/logout', 'POST', {});
+    } catch {
+      // Clear local state regardless
+    }
+    setUser(null);
+    setQuota(null);
+    setUsage(null);
+    setAccountMenuOpen(false);
+    if (PROTECTED_ROUTES.includes(route)) {
+      navigate('/');
+    }
+  };
+
+  const goToChangePassword = () => {
+    navigate('/profile');
+    setTimeout(() => {
+      document.getElementById('change-password')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  };
 
   const navItems: Array<{ label: string; path: string; adminOnly?: boolean }> = [
     { label: 'Tổng quan', path: '/' },
@@ -133,7 +224,7 @@ export default function App() {
     openStudio({ template: matched || null });
   };
 
-  const isProtectedRoute = ['/studio', '/my-videos', '/products', '/profile', '/admin'].includes(route);
+  const isProtectedRoute = PROTECTED_ROUTES.includes(route);
 
   return (
     <div className="app-shell">
@@ -148,21 +239,25 @@ export default function App() {
           aria-label="AI Product Video Studio"
         >
           <span className="brand-mark">
-            <Aperture size={22} />
+            <Aperture size={21} />
           </span>
-          <span className="brand-copy">
-            <strong>AI PRODUCT</strong>
-            <small>VIDEO STUDIO</small>
-          </span>
+          <span className="brand-name">AI Product Video Studio</span>
         </a>
 
-        <button className="mobile-toggle" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Mở menu">
-          {mobileMenu ? <X /> : <Menu />}
+        <button
+          type="button"
+          className="mobile-toggle"
+          onClick={() => setMobileMenu(!mobileMenu)}
+          aria-label={mobileMenu ? 'Đóng menu' : 'Mở menu'}
+          aria-expanded={mobileMenu}
+        >
+          {mobileMenu ? <X size={22} /> : <Menu size={22} />}
         </button>
 
-        <nav className={mobileMenu ? 'main-nav open' : 'main-nav'}>
+        <nav className={mobileMenu ? 'main-nav open' : 'main-nav'} aria-label="Điều hướng chính">
           {navItems.map(item => (
             <button
+              type="button"
               key={item.path}
               className={route === item.path ? 'nav-link active' : 'nav-link'}
               onClick={() => navigate(item.path)}
@@ -173,27 +268,86 @@ export default function App() {
         </nav>
 
         <div className="top-actions">
-          <span className="free-pill">
-            <span /> FREE-FIRST
-          </span>
           {user ? (
-            <button
-              className="login-btn user-chip-btn"
-              onClick={() => navigate('/profile')}
-              title="Thông tin tài khoản"
-            >
-              <UserIcon size={14} /> {user.fullName}
-            </button>
+            <div className="account-menu-wrap" ref={accountMenuRef}>
+              <button
+                type="button"
+                className="account-trigger"
+                aria-expanded={accountMenuOpen}
+                aria-haspopup="menu"
+                onClick={() => setAccountMenuOpen(prev => !prev)}
+              >
+                <span className="account-trigger-avatar">{user.fullName.slice(0, 1).toUpperCase()}</span>
+                <span className="account-trigger-meta">
+                  <strong>{user.fullName}</strong>
+                  <small>{roleLabel[user.role] || user.role}</small>
+                </span>
+                <ChevronDown size={16} className={accountMenuOpen ? 'chevron-rotated' : ''} />
+              </button>
+
+              {accountMenuOpen && (
+                <div className="account-dropdown" role="menu" aria-label="Menu tài khoản">
+                  <div className="account-dropdown-head">
+                    <strong>{user.fullName}</strong>
+                    <span>{user.email}</span>
+                    <div className="account-dropdown-tags">
+                      <span>{roleLabel[user.role] || user.role}</span>
+                      <span>·</span>
+                      <span>{statusLabel[user.status] || user.status}</span>
+                    </div>
+                  </div>
+
+                  <div className="account-dropdown-list">
+                    <button type="button" role="menuitem" onClick={() => navigate('/profile')}>
+                      <UserIcon size={16} /> Thông tin tài khoản
+                    </button>
+                    <button type="button" role="menuitem" onClick={goToChangePassword}>
+                      <KeyRound size={16} /> Đổi mật khẩu
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => navigate('/products')}>
+                      <Package size={16} /> Sản phẩm của tôi
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => navigate('/my-videos')}>
+                      <FolderKanban size={16} /> Video của tôi
+                    </button>
+                    {['SUPER_ADMIN', 'ADMIN'].includes(user.role) && (
+                      <button type="button" role="menuitem" onClick={() => navigate('/admin')}>
+                        <Shield size={16} /> Quản trị hệ thống
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="account-dropdown-foot">
+                    <button type="button" role="menuitem" className="account-logout-item" onClick={handleLogout}>
+                      <LogOut size={16} /> Đăng xuất
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
-            <button
-              className="login-btn"
-              onClick={() => {
-                setAuthModalMode('login');
-                setAuthOpen(true);
-              }}
-            >
-              Đăng nhập
-            </button>
+            <div className="guest-actions">
+              <button
+                type="button"
+                className="register-text-btn"
+                onClick={() => {
+                  setAuthModalMode('register');
+                  setAuthOpen(true);
+                }}
+              >
+                Đăng ký
+              </button>
+              <button
+                type="button"
+                className="login-btn"
+                onClick={() => {
+                  setAuthModalMode('login');
+                  setAuthOpen(true);
+                }}
+              >
+                Đăng nhập
+              </button>
+            </div>
           )}
         </div>
       </header>
@@ -203,42 +357,38 @@ export default function App() {
           <>
             <section className="hero">
               <div className="hero-copy">
-                <div className="eyebrow">
-                  <Sparkles size={15} /> SÁNG TẠO VIDEO SẢN PHẨM THÔNG MINH
-                </div>
+                <span className="eyebrow">NỀN TẢNG SÁNG TẠO VIDEO SẢN PHẨM</span>
                 <h1>
                   Biến hình ảnh sản phẩm
                   <br />
-                  <span>thành video ấn tượng.</span>
+                  <span>thành video hoàn chỉnh.</span>
                 </h1>
                 <p>
-                  Một không gian sáng tạo video đa định dạng, đa ngành hàng. Từ ảnh sản phẩm đến nội dung, giọng đọc và video MP4 hoàn chỉnh trong cùng một quy trình.
+                  Từ bộ ảnh sản phẩm thực tế đến kịch bản phân cảnh, giọng đọc, phụ đề và file MP4 hoàn chỉnh — gọn nhẹ trong một quy trình thống nhất.
                 </p>
                 <div className="hero-buttons">
-                  <button className="primary-btn" onClick={handleHeroStart}>
+                  <button type="button" className="primary-btn" onClick={handleHeroStart}>
                     <WandSparkles size={17} /> Bắt đầu tạo video <ArrowRight size={17} />
                   </button>
-                  <button className="secondary-btn" onClick={() => navigate('/templates')}>
+                  <button type="button" className="secondary-btn" onClick={() => navigate('/templates')}>
                     Khám phá mẫu video
                   </button>
                 </div>
                 <div className="hero-points">
                   <span>
-                    <ShieldCheck size={16} /> Tài khoản được phê duyệt
+                    <CheckCircle2 size={16} /> Xuất MP4 trực tiếp trên trình duyệt
                   </span>
                   <span>
-                    <BadgeCheck size={16} /> Ưu tiên công cụ miễn phí
+                    <CheckCircle2 size={16} /> Phân quyền & bảo mật tài khoản chặt chẽ
                   </span>
                 </div>
               </div>
+
               <div className="hero-visual">
-                <div className="visual-glow" />
                 <div className="preview-card">
                   <div className="preview-top">
-                    <span>
-                      <i /> STUDIO PREVIEW
-                    </span>
-                    <span className="preview-live">PREVIEW</span>
+                    <span>STUDIO PREVIEW</span>
+                    <span className="preview-spec">9:16 · 00:15</span>
                   </div>
                   <div className="product-stage">
                     <div className="stage-orbit orbit-one" />
@@ -254,29 +404,23 @@ export default function App() {
                       </div>
                     </div>
                     <div className="stage-caption">
-                      <small>YOUR PRODUCT</small>
+                      <small>PRODUCT SHOWCASE</small>
                       <strong>
-                        Make it
+                        Rõ nét từng
                         <br />
-                        memorable.
+                        khung hình.
                       </strong>
                     </div>
                   </div>
                   <div className="preview-controls">
                     <span>
-                      <Play size={13} fill="currentColor" /> 00:15
+                      <Play size={13} fill="currentColor" /> 00:06
                     </span>
                     <div className="timeline">
                       <i />
                     </div>
-                    <span>9:16</span>
+                    <span>00:15</span>
                   </div>
-                </div>
-                <div className="float-chip chip-ai">
-                  <Sparkles size={15} /> AI-assisted workflow
-                </div>
-                <div className="float-chip chip-format">
-                  <Film size={15} /> Multi-format export
                 </div>
               </div>
             </section>
@@ -284,77 +428,81 @@ export default function App() {
             <section className="workflow section-wrap">
               <div className="section-heading">
                 <div>
-                  <span className="eyebrow">QUY TRÌNH ĐƠN GIẢN</span>
-                  <h2>Từ sản phẩm đến video</h2>
+                  <span className="eyebrow">QUY TRÌNH 4 BƯỚC</span>
+                  <h2>Từ sản phẩm đến video thành phẩm</h2>
                 </div>
-                <p>Thiết kế theo từng bước rõ ràng, dễ sử dụng trên máy tính, máy tính bảng và điện thoại.</p>
+                <p>Thiết kế rõ ràng theo từng bước, thao tác thuận tiện trên máy tính, máy tính bảng và điện thoại.</p>
               </div>
               <div className="steps-grid">
-                {steps.map((step, i) => (
-                  <div className="step-card" key={step}>
-                    <span className="step-number">0{i + 1}</span>
-                    <div className="step-icon">{[<ImagePlus />, <WandSparkles />, <Aperture />, <MonitorPlay />][i]}</div>
-                    <strong>{step}</strong>
-                    <small>
-                      {
-                        [
-                          'Thêm hình ảnh và thông tin cơ bản',
-                          'Phát triển ý tưởng và lời thoại',
-                          'Tùy chỉnh phong cách thể hiện',
-                          'Kiểm tra thành phẩm và xuất MP4',
-                        ][i]
-                      }
-                    </small>
-                  </div>
-                ))}
+                {steps.map((step, i) => {
+                  const Icon = step.icon;
+                  return (
+                    <div className="step-card" key={step.title}>
+                      <div className="step-card-top">
+                        <span className="step-icon">
+                          <Icon size={20} />
+                        </span>
+                        <span className="step-number">0{i + 1}</span>
+                      </div>
+                      <strong>{step.title}</strong>
+                      <p>{step.desc}</p>
+                    </div>
+                  );
+                })}
               </div>
             </section>
 
             <section className="formats section-wrap" id="formats">
               <div className="section-heading">
                 <div>
-                  <span className="eyebrow">KHÔNG GIỚI HẠN NGÀNH HÀNG</span>
-                  <h2>Một nền tảng, nhiều phong cách</h2>
+                  <span className="eyebrow">ĐA NGÀNH HÀNG · ĐA ĐỊNH DẠNG</span>
+                  <h2>Chọn phong cách phù hợp sản phẩm</h2>
                 </div>
-                <p>Lựa chọn hình thức phù hợp với mục tiêu truyền thông và đặc điểm sản phẩm.</p>
+                <p>Áp dụng linh hoạt cho mỹ phẩm, thời trang, điện tử, gia dụng, nội thất và nhiều lĩnh vực khác.</p>
               </div>
               <div className="format-grid">
-                {landingFormats.map((format, i) => (
-                  <button
-                    key={format.name}
-                    className={selected === format.name ? 'format-card chosen' : 'format-card'}
-                    onClick={() => setSelected(format.name)}
-                  >
-                    <div className="format-card-top">
-                      <span className="format-icon">
-                        {[<Clapperboard />, <MonitorPlay />, <Aperture />, <Play />, <LayoutTemplate />, <Film />][i]}
+                {landingFormats.map((format, i) => {
+                  const Icon = [Clapperboard, MonitorPlay, Aperture, Play, LayoutTemplate, Film][i];
+                  return (
+                    <button
+                      type="button"
+                      key={format.name}
+                      className={selected === format.name ? 'format-card chosen' : 'format-card'}
+                      onClick={() => setSelected(format.name)}
+                    >
+                      <div className="format-card-top">
+                        <span className="format-icon">
+                          <Icon size={20} />
+                        </span>
+                        <span className="format-tag">{format.tag}</span>
+                      </div>
+                      <strong>{format.name}</strong>
+                      <p>{format.detail}</p>
+                      <span className="format-select">
+                        {selected === format.name ? 'Đang chọn' : 'Chọn phong cách'} <ArrowRight size={15} />
                       </span>
-                      <span className="format-tag">{format.tag}</span>
-                    </div>
-                    <strong>{format.name}</strong>
-                    <small>{format.detail}</small>
-                    <span className="format-select">
-                      {selected === format.name ? 'Đang chọn' : 'Chọn phong cách'} <ArrowRight size={14} />
-                    </span>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </section>
 
             <section className="studio-callout section-wrap" id="studio">
-              <div className="callout-icon">
-                <WandSparkles size={25} />
+              <div className="callout-box">
+                <div className="callout-icon">
+                  <WandSparkles size={24} />
+                </div>
+                <div className="callout-copy">
+                  <span className="eyebrow">VIDEO STUDIO</span>
+                  <h2>Sẵn sàng dựng video cho sản phẩm của bạn?</h2>
+                  <p>
+                    Bắt đầu với phong cách <b>{selected}</b> hoặc chọn mẫu có sẵn trong thư viện.
+                  </p>
+                </div>
+                <button type="button" className="primary-btn" onClick={handleHeroStart}>
+                  Mở Video Studio <ArrowRight size={17} />
+                </button>
               </div>
-              <div>
-                <span className="eyebrow">AI PRODUCT VIDEO STUDIO</span>
-                <h2>Sẵn sàng kể câu chuyện sản phẩm?</h2>
-                <p>
-                  Chọn phong cách <b>{selected}</b> và bắt đầu xây dựng video sản phẩm của bạn.
-                </p>
-              </div>
-              <button className="primary-btn" onClick={handleHeroStart}>
-                Mở Video Studio <ArrowRight size={17} />
-              </button>
             </section>
           </>
         )}
@@ -364,12 +512,11 @@ export default function App() {
             <AuthPanel
               open={true}
               inline={true}
+              currentUser={user}
               initialMode={route === '/register' ? 'register' : 'login'}
               onClose={() => navigate('/')}
               onAuthChange={(u, q, us) => {
-                setUser(u);
-                setQuota(q || null);
-                setUsage(us || null);
+                handleAuthChange(u, q, us);
                 if (u) navigate('/studio');
               }}
               onNavigate={navigate}
@@ -394,7 +541,7 @@ export default function App() {
         {isProtectedRoute && authChecked && !user && (
           <div className="workspace-page">
             <div className="panel-card auth-gate-banner">
-              <ShieldCheck size={22} />
+              <ShieldCheck size={24} />
               <div>
                 <h2>Khu vực dành cho tài khoản đã được phê duyệt</h2>
                 <p>Vui lòng đăng nhập bằng tài khoản đã được Admin hoặc Super Admin phê duyệt để sử dụng Studio, quản lý sản phẩm và xuất video.</p>
@@ -403,13 +550,10 @@ export default function App() {
             <AuthPanel
               open={true}
               inline={true}
+              currentUser={null}
               initialMode="login"
               onClose={() => {}}
-              onAuthChange={(u, q, us) => {
-                setUser(u);
-                setQuota(q || null);
-                setUsage(us || null);
-              }}
+              onAuthChange={handleAuthChange}
               onNavigate={navigate}
             />
           </div>
@@ -448,6 +592,7 @@ export default function App() {
                 quota={quota}
                 usage={usage}
                 onUserUpdated={updated => setUser(updated)}
+                onLogout={handleLogout}
               />
             )}
             {route === '/admin' && (
@@ -467,13 +612,10 @@ export default function App() {
 
       <AuthPanel
         open={authOpen}
+        currentUser={user}
         initialMode={authModalMode}
         onClose={() => setAuthOpen(false)}
-        onAuthChange={(u, q, us) => {
-          setUser(u);
-          setQuota(q || null);
-          setUsage(us || null);
-        }}
+        onAuthChange={handleAuthChange}
         onNavigate={navigate}
       />
 
@@ -487,12 +629,9 @@ export default function App() {
           }}
         >
           <span className="brand-mark">
-            <Aperture size={19} />
+            <Aperture size={18} />
           </span>
-          <span className="brand-copy">
-            <strong>AI PRODUCT</strong>
-            <small>VIDEO STUDIO</small>
-          </span>
+          <span className="brand-name">AI Product Video Studio</span>
         </a>
         <span>Nền tảng sáng tạo video sản phẩm đa ngành hàng · aivideo.xuanthang.io.vn</span>
         <small>© {new Date().getFullYear()} AI Product Video Studio</small>
