@@ -19,7 +19,6 @@ export default function AuthPanel({open,onClose}:Props) {
   const [email,setEmail] = useState(''); const [fullName,setFullName] = useState('');
   const [password,setPassword] = useState(''); const [currentPassword,setCurrentPassword] = useState('');
   const [newPassword,setNewPassword] = useState(''); const [message,setMessage] = useState(''); const [error,setError] = useState(''); const [busy,setBusy] = useState(false);
-  const [resetTarget,setResetTarget] = useState('');
   const loadUsers = async () => { const result=await api('/api/admin/users'); setUsers(result.users || []); };
   useEffect(()=>{ if(open){setError('');setMessage('');api('/api/auth/me').then(r=>{if(r.user){setUser(r.user);setMode('account');}}).catch(()=>{});} },[open]);
   useEffect(()=>{ if(open && user && ['SUPER_ADMIN','ADMIN'].includes(user.role)) loadUsers().catch(e=>setError(e.message)); },[open,user?.id]);
@@ -58,7 +57,7 @@ export default function AuthPanel({open,onClose}:Props) {
             {item.role!=='SUPER_ADMIN'&&<div className="admin-user-actions">
               {item.status==='PENDING_APPROVAL'&&<button title="Phê duyệt" onClick={()=>action(item.id,'approve')}><Check size={15}/></button>}
               {item.status==='APPROVED'?<button title="Khóa tài khoản" onClick={()=>action(item.id,'disable')}><Ban size={15}/></button>:item.status!=='PENDING_APPROVAL'&&<button title="Mở khóa / duyệt" onClick={()=>action(item.id,'enable')}><Check size={15}/></button>}
-              {user.role==='SUPER_ADMIN'&&<button title="Đặt lại mật khẩu" onClick={()=>{setResetTarget(item.id);const next=window.prompt('Nhập mật khẩu mới (ít nhất 12 ký tự):');if(next)action(item.id,'reset-password',{newPassword:next});}}><KeyRound size={15}/></button>}
+              {user.role==='SUPER_ADMIN'&&<button title="Đặt lại mật khẩu" onClick={()=>{const next=window.prompt('Nhập mật khẩu mới (ít nhất 12 ký tự):');if(next)action(item.id,'reset-password',{newPassword:next});}}><KeyRound size={15}/></button>}
               {user.role==='SUPER_ADMIN'&&<button title="Xóa tài khoản" onClick={()=>{if(window.confirm('Bạn chắc chắn muốn xóa tài khoản '+item.email+'?'))action(item.id,'delete');}}><X size={15}/></button>}
             </div>}
           </div>)}
