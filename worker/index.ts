@@ -32,14 +32,28 @@ async function digest(value: string) {
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return hex(new Uint8Array(hash));
 }
-async function passwordHash(password: string, salt: string) {
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: fromHex(salt), iterations: 310000, hash: 'SHA-256' }, key, 256);
+async function passwordHash(password: string, salt: string, iterations = 100000) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: fromHex(salt), iterations, hash: 'SHA-256' },
+    key,
+    256
+  );
   return hex(new Uint8Array(bits));
 }
+
 async function verifyPassword(password: string, salt: string, expected: string) {
-  const actual = await passwordHash(password, salt);
-  return actual.length === expected.length && actual === expected;
+  const current = await passwordHash(password, salt, 100000);
+  if (current === expected) return true;
+
+  const legacy = await passwordHash(password, salt, 310000);
+  return legacy === expected;
 }
 function cookie(request: Request, name: string) {
   const raw = request.headers.get('cookie') || '';
