@@ -19,7 +19,7 @@
 5. Đặt `APP_ORIGIN` thành origin triển khai chính xác (ví dụ `https://aivideo.xuanthang.io.vn`) bằng secret/vars phù hợp. Không trỏ hoặc thay đổi DNS tên miền gốc.
 
 ## Khởi tạo Super Admin đúng một lần
-Gửi POST tới `/api/auth/bootstrap`, header `x-bootstrap-key: <BOOTSTRAP_ADMIN_KEY>`, Content-Type application/json, body:
+Gửi POST tới `/api/auth/bootstrap`, header `x-bootstrap-key: <BOOTSTRAP_ADMIN_KEY>`, header `Origin: <APP_ORIGIN>`, Content-Type application/json, body:
 `{"email":"email-quan-tri-cua-ban","fullName":"Super Admin","password":"mat-khau-manh-tu-12-ky-tu"}`
 
 Endpoint chỉ hoạt động khi chưa có Super Admin. Sau khi tạo thành công, xóa secret `BOOTSTRAP_ADMIN_KEY` khỏi Worker environment ngay. Không đưa key hay mật khẩu vào mã nguồn, GitHub, ảnh chụp màn hình hoặc trao đổi công khai.
