@@ -46,10 +46,24 @@ function cookie(request: Request, name: string) {
   const item = raw.split(';').map(v => v.trim()).find(v => v.startsWith(name + '='));
   return item ? decodeURIComponent(item.slice(name.length + 1)) : '';
 }
-function cookieHeader(value: string, maxAge: number) {
-  return `__Host-avs_session=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+function isHttpsRequest(request: Request) {
+  return new URL(request.url).protocol === 'https:';
 }
-function clearCookie() { return '__Host-avs_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0'; }
+function sessionToken(request: Request) {
+  return cookie(request, '__Host-avs_session') || cookie(request, 'avs_session');
+}
+function cookieHeader(value: string, maxAge: number, isHttps: boolean) {
+  if (isHttps) {
+    return `__Host-avs_session=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=${maxAge}`;
+  }
+  return `avs_session=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+}
+function clearCookie(isHttps: boolean) {
+  if (isHttps) {
+    return '__Host-avs_session=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0';
+  }
+  return 'avs_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
+}
 function originAllowed(request: Request, env: Env) {
   const origin = request.headers.get('origin');
   if (!origin) return request.method === 'GET' || request.method === 'HEAD';
@@ -68,7 +82,7 @@ function publicUser(user: UserRow) {
   return { id: user.id, email: user.email, fullName: user.full_name, role: user.role, status: user.status, createdAt: user.created_at, approvedAt: user.approved_at, lastLoginAt: user.last_login_at };
 }
 async function currentUser(request: Request, env: Env): Promise<UserRow | null> {
-  const token = cookie(request, '__Host-avs_session');
+  const token = sessionToken(request);
   if (!token) return null;
   const hash = await digest(token);
   const row = await env.DB.prepare(`SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at > ? LIMIT 1`)
@@ -144,18 +158,18 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       if (user.status !== 'APPROVED') return fail(user.status === 'PENDING_APPROVAL' ? 'Tài khoản đang chờ phê duyệt.' : 'Tài khoản hiện không được phép đăng nhập.', 403);
       const session = await issueSession(env, user);
       await audit(env, user.id, user.id, 'LOGIN');
-      return json({ user: publicUser(user) }, 200, { 'set-cookie': cookieHeader(session.token, session.maxAge) });
+      return json({ user: publicUser(user) }, 200, { 'set-cookie': cookieHeader(session.token, session.maxAge, isHttpsRequest(request)) });
     }
 
     if (path === '/api/auth/logout' && request.method === 'POST') {
-      const token = cookie(request, '__Host-avs_session');
+      const token = sessionToken(request);
       if (token) await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await digest(token)).run();
-      return json({ message: 'Đã đăng xuất.' }, 200, { 'set-cookie': clearCookie() });
+      return json({ message: 'Đã đăng xuất.' }, 200, { 'set-cookie': clearCookie(isHttpsRequest(request)) });
     }
 
     if (path === '/api/auth/me' && request.method === 'GET') {
       const user = await currentUser(request, env);
-      return user ? json({ user: publicUser(user) }) : json({ user: null }, 200, { 'set-cookie': clearCookie() });
+      return user ? json({ user: publicUser(user) }) : json({ user: null }, 200, { 'set-cookie': clearCookie(isHttpsRequest(request)) });
     }
 
     const actor = await currentUser(request, env);
@@ -175,7 +189,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       if (!fresh) return fail('Không thể tải lại tài khoản.',500);
       const session = await issueSession(env,fresh);
       await audit(env,actor.id,actor.id,'PASSWORD_CHANGED');
-      return json({ message:'Đổi mật khẩu thành công.' },200,{'set-cookie':cookieHeader(session.token,session.maxAge)});
+      return json({ message:'Đổi mật khẩu thành công.' },200,{'set-cookie':cookieHeader(session.token,session.maxAge,isHttpsRequest(request))});
     }
 
     if (path === '/api/admin/users' && request.method === 'GET') {
