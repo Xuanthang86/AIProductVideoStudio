@@ -21,10 +21,11 @@ import {
 } from 'lucide-react';
 import PasswordInput from './PasswordInput';
 import { api, formatDate, projectStatusLabel, roleLabel, statusLabel } from '../lib/api';
-import type { AICapabilityModule, Industry, User, VideoTemplate } from '../types';
+import type { AICapabilityModule, Industry, User, VideoTemplate, VideoTopic } from '../types';
 
 interface Props {
   actor: User;
+  topics: VideoTopic[];
   onRefreshCatalog: () => void;
 }
 
@@ -56,7 +57,7 @@ interface DashboardStats {
 
 type TabKey = 'dashboard' | 'users' | 'products' | 'videos' | 'catalog' | 'ai' | 'logs' | 'system';
 
-export default function AdminPage({ actor, onRefreshCatalog }: Props) {
+export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
   const [tab, setTab] = useState<TabKey>('dashboard');
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [aiUsage, setAiUsage] = useState<Array<{ module_key: string; calls: number; tokens: number; cost: number }>>([]);
@@ -81,6 +82,7 @@ export default function AdminPage({ actor, onRefreshCatalog }: Props) {
   const [newTplIndustry, setNewTplIndustry] = useState('Mỹ phẩm');
   const [newTplDesc, setNewTplDesc] = useState('');
   const [newIndName, setNewIndName] = useState('');
+  const [newTopicName, setNewTopicName] = useState('');
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -235,6 +237,24 @@ export default function AdminPage({ actor, onRefreshCatalog }: Props) {
       onRefreshCatalog();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Lỗi thêm ngành hàng.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createTopic = async () => {
+    const name = newTopicName.trim();
+    if (!name) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      await api('/api/admin/topics', 'POST', { name });
+      setNewTopicName('');
+      setMessage('Đã thêm chủ đề video.');
+      await onRefreshCatalog();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Lỗi thêm chủ đề video.');
     } finally {
       setBusy(false);
     }
@@ -741,6 +761,26 @@ export default function AdminPage({ actor, onRefreshCatalog }: Props) {
                   <button className="primary-btn" disabled={busy || !newIndName.trim()} onClick={createIndustry}>
                     Thêm ngành
                   </button>
+                </div>
+              </section>
+
+              <section className="panel-card">
+                <h3>Chủ đề video ({topics.length})</h3>
+                <p className="muted-copy">Danh mục chủ đề dùng chung trong Studio và bộ lọc thư viện mẫu video.</p>
+                <div className="search-box">
+                  <input
+                    value={newTopicName}
+                    onChange={e => setNewTopicName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') createTopic(); }}
+                    placeholder="Tên chủ đề video mới..."
+                    maxLength={80}
+                  />
+                  <button className="primary-btn" disabled={busy || !newTopicName.trim()} onClick={createTopic}>
+                    <Plus size={15} /> Thêm chủ đề
+                  </button>
+                </div>
+                <div className="chip-list">
+                  {topics.map(topic => <span className="pill-badge" key={topic.id}>{topic.name}</span>)}
                 </div>
               </section>
             </>
