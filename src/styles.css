@@ -837,7 +837,7 @@ main,
   font-size: 13.5px;
 }
 
-/* PasswordInput with Quick-Clear X */
+/* PasswordInput with Show/Hide Eye & Quick-Clear X */
 .password-field-wrap {
   position: relative;
   display: flex;
@@ -845,30 +845,51 @@ main,
   width: 100%;
 }
 
-.password-field-wrap .password-field-input {
+.password-field-wrap input.password-field-input,
+.auth-content .password-field-wrap input.password-field-input,
+.field-label .password-field-wrap input.password-field-input {
   width: 100%;
-  padding-right: 42px;
+  padding-right: 44px;
 }
 
-.password-clear-btn {
+.password-field-wrap.has-clear input.password-field-input,
+.auth-content .password-field-wrap.has-clear input.password-field-input,
+.field-label .password-field-wrap.has-clear input.password-field-input {
+  padding-right: 76px;
+}
+
+.password-field-actions {
   position: absolute;
-  right: 8px;
+  right: 7px;
   top: 50%;
   transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  z-index: 1;
+}
+
+.password-action-btn {
   width: 30px;
   height: 30px;
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #6c7b93;
+  color: #64748b;
   display: grid;
   place-items: center;
   padding: 0;
+  transition: background 0.15s, color 0.15s;
 }
 
-.password-clear-btn:hover {
+.password-action-btn:hover:not(:disabled) {
   background: #edf2fa;
   color: var(--navy);
+}
+
+.password-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .field-error-note {
@@ -2461,14 +2482,21 @@ main,
   color: var(--ink-soft);
 }
 
-/* Tablet & Laptop Breakpoints */
+/* Laptop & Tablet Breakpoints */
+@media (max-width: 1440px) {
+  .register-text-btn {
+    display: none;
+  }
+}
+
 @media (max-width: 1120px) {
   .topbar {
-    padding: 0 24px;
+    padding: 0 20px;
+    gap: 14px;
   }
 
   .main-nav {
-    gap: 16px;
+    gap: 14px;
   }
 
   .nav-link {
@@ -2508,10 +2536,35 @@ main,
 }
 
 @media (max-width: 900px) {
+  .topbar {
+    gap: 12px;
+  }
+
   .mobile-toggle {
-    display: grid;
+    order: -1;
+    display: inline-grid;
     place-items: center;
-    margin-left: auto;
+    margin-left: 0;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border-radius: 9px;
+    flex-shrink: 0;
+  }
+
+  .mobile-toggle:hover {
+    background: rgba(255, 255, 255, 0.72);
+  }
+
+  .brand {
+    order: 0;
+    margin-right: auto;
+    min-width: 0;
+  }
+
+  .top-actions {
+    order: 1;
+    flex-shrink: 0;
   }
 
   .main-nav {
@@ -2585,41 +2638,48 @@ main,
 
 @media (max-width: 680px) {
   .topbar {
-    height: 68px;
-    padding: 0 16px;
-    gap: 10px;
+    height: 66px;
+    padding: 0 12px;
+    gap: 8px;
   }
 
   .main-nav {
-    top: 67px;
+    top: 65px;
+  }
+
+  .mobile-toggle {
+    width: 36px;
+    height: 36px;
+  }
+
+  .brand {
+    gap: 8px;
   }
 
   .brand-mark {
-    width: 34px;
-    height: 34px;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    flex-shrink: 0;
   }
 
   .brand-name {
-    font-size: 14.5px;
-  }
-
-  .register-text-btn {
-    display: none;
+    font-size: 13.5px;
   }
 
   .login-btn {
-    padding: 8px 13px;
-    min-height: 40px;
-    font-size: 14px;
+    padding: 8px 12px;
+    min-height: 38px;
+    font-size: 13.5px;
   }
 
   .account-trigger {
     padding: 5px 9px 5px 6px;
-    min-height: 40px;
+    min-height: 38px;
   }
 
   .account-trigger-meta {
-    max-width: 112px;
+    max-width: 100px;
   }
 
   .account-trigger-meta small {
@@ -2738,9 +2798,52 @@ main,
   }
 }
 
-@media (max-width: 380px) {
+@media (max-width: 389px) {
+  .topbar {
+    padding: 0 10px;
+    gap: 6px;
+  }
+
+  .mobile-toggle {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brand {
+    gap: 6px;
+  }
+
+  .brand-mark {
+    width: 28px;
+    height: 28px;
+  }
+
   .brand-name {
-    font-size: 13.5px;
+    font-size: 12px;
+    letter-spacing: -0.025em;
+  }
+
+  .login-btn {
+    padding: 7px 10px;
+    min-height: 36px;
+    font-size: 12.5px;
+    border-radius: 8px;
+  }
+
+  .account-trigger {
+    padding: 4px 7px 4px 5px;
+    gap: 5px;
+    min-height: 36px;
+  }
+
+  .account-trigger-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+
+  .account-trigger-meta {
+    max-width: 54px;
   }
 
   .hero h1 {
@@ -2750,5 +2853,37 @@ main,
   .hero-buttons {
     flex-direction: column;
     align-items: stretch;
+  }
+}
+
+@media (max-width: 359px) {
+  .topbar {
+    padding: 0 8px;
+    gap: 5px;
+  }
+
+  .mobile-toggle {
+    width: 30px;
+    height: 30px;
+  }
+
+  .brand {
+    gap: 5px;
+  }
+
+  .brand-mark {
+    width: 26px;
+    height: 26px;
+  }
+
+  .brand-name {
+    font-size: 11.5px;
+    letter-spacing: -0.03em;
+  }
+
+  .login-btn {
+    padding: 6px 9px;
+    min-height: 34px;
+    font-size: 12px;
   }
 }

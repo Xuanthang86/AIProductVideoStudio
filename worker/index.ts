@@ -105,6 +105,13 @@ const json = (data: unknown, status = 200, headers: HeadersInit = {}) =>
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers },
   });
 const fail = (message: string, status = 400) => json({ error: message }, status);
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
 const uuid = () => crypto.randomUUID();
 const bytes = (n: number) => crypto.getRandomValues(new Uint8Array(n));
 const hex = (v: Uint8Array) => Array.from(v, x => x.toString(16).padStart(2, '0')).join('');
@@ -137,6 +144,7 @@ async function passwordHash(password: string, salt: string, iterations = 100000)
 }
 
 async function verifyPassword(password: string, salt: string, expected: string) {
+  if (!password || !salt || !expected) return false;
   const current = await passwordHash(password, salt, 100000);
   if (current === expected) return true;
   try {
@@ -196,9 +204,14 @@ function originAllowed(request: Request, env: Env) {
 
 async function body(request: Request) {
   const type = request.headers.get('content-type') || '';
-  if (!type.includes('application/json')) throw new Error('Yêu cầu phải sử dụng JSON.');
-  const value = await request.json();
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Dữ liệu không hợp lệ.');
+  if (!type.includes('application/json')) throw new HttpError(400, 'Yêu cầu phải sử dụng JSON.');
+  let value: unknown;
+  try {
+    value = await request.json();
+  } catch {
+    throw new HttpError(400, 'Dữ liệu JSON không hợp lệ.');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'Dữ liệu không hợp lệ.');
   return value as Record<string, unknown>;
 }
 
@@ -644,6 +657,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const data = await body(request);
       const identifier = (str(data.identifier) || str(data.email)).toLowerCase();
       const password = str(data.password);
+      if (!identifier || !password) {
+        return fail('Vui lòng nhập email hoặc tên đăng nhập và mật khẩu.', 400);
+      }
       const ip = clientIp(request);
       const rateKey = `login:${ip}:${identifier}`;
 
@@ -2017,6 +2033,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
     return fail('Không tìm thấy API.', 404);
   } catch (error) {
+    if (error instanceof HttpError) {
+      return fail(error.message, error.status);
+    }
     console.error('API error', error);
     return fail('Đã xảy ra lỗi máy chủ. Vui lòng thử lại hoặc kiểm tra nhật ký Worker.', 500);
   }
