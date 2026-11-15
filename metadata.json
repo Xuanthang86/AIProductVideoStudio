@@ -1,0 +1,8 @@
+{
+  "name": "AI Product Video Studio",
+  "description": "AI Product Video Studio - nền tảng sáng tạo video sản phẩm đa ngành hàng.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

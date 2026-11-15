@@ -2,18 +2,12 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import worker, { type Env } from './worker/index';
-import { createMockD1 } from './server/mock-d1';
+import { createSqliteD1 } from './server/sqlite-d1';
+import { analyzeProductWithGemini, generateScriptsWithGemini } from './server/gemini';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
-
-const env: Env = {
-  DB: createMockD1(),
-  BOOTSTRAP_ADMIN_KEY: process.env.BOOTSTRAP_ADMIN_KEY,
-  APP_ORIGIN: process.env.APP_ORIGIN,
-  SESSION_DAYS: process.env.SESSION_DAYS || '7',
-};
 
 function readRawBody(req: express.Request): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -25,6 +19,25 @@ function readRawBody(req: express.Request): Promise<Buffer> {
 }
 
 async function startServer() {
+  const db = await createSqliteD1();
+
+  const env: Env = {
+    DB: db,
+    BOOTSTRAP_ADMIN_KEY: process.env.BOOTSTRAP_ADMIN_KEY,
+    APP_ORIGIN: process.env.APP_ORIGIN,
+    SESSION_DAYS: process.env.SESSION_DAYS || '7',
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    IMAGEKIT_PUBLIC_KEY: process.env.IMAGEKIT_PUBLIC_KEY,
+    IMAGEKIT_PRIVATE_KEY: process.env.IMAGEKIT_PRIVATE_KEY,
+    IMAGEKIT_URL_ENDPOINT: process.env.IMAGEKIT_URL_ENDPOINT,
+    KOKORO_TTS_URL: process.env.KOKORO_TTS_URL,
+    COMFYUI_API_URL: process.env.COMFYUI_API_URL,
+    AI_CALLER: {
+      analyzeProduct: analyzeProductWithGemini,
+      generateScripts: generateScriptsWithGemini,
+    },
+  };
+
   const app = express();
   app.set('trust proxy', true);
 

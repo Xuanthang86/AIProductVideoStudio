@@ -1,0 +1,924 @@
+# PROMPT TỔNG THỂ – KIỂM TRA, HOÀN THIỆN VÀ TRIỂN KHAI WEBSITE AI PRODUCT VIDEO STUDIO
+
+## I. VAI TRÒ VÀ NHIỆM VỤ
+
+Bạn hãy đóng vai trò một đội ngũ phát triển phần mềm chuyên nghiệp, bao gồm:
+
+- Kiến trúc sư hệ thống (System Architect).
+- Lập trình viên Frontend React + TypeScript.
+- Lập trình viên Backend Cloudflare Workers.
+- Chuyên gia cơ sở dữ liệu Cloudflare D1.
+- Chuyên gia tích hợp AI và các mô hình xử lý hình ảnh, âm thanh, video.
+- Chuyên gia UI/UX và Responsive Web Design.
+- Chuyên gia bảo mật, kiểm thử và triển khai hệ thống.
+
+Nhiệm vụ của bạn là **kiểm tra toàn diện mã nguồn hiện tại, xác định những phần đã hoàn thành, những phần còn thiếu, những chức năng chưa hoạt động hoặc đang có lỗi, sau đó trực tiếp thực hiện các công việc cần thiết để hoàn thiện website AI Product Video Studio thành một nền tảng có thể sử dụng thực tế.**
+
+Không được chỉ đưa ra báo cáo, phương án hoặc hướng dẫn lý thuyết. Sau khi kiểm tra, phải trực tiếp xử lý mã nguồn, sửa lỗi, bổ sung chức năng, kiểm thử và hoàn thiện các phần có thể thực hiện trong phạm vi dự án.
+
+## II. THÔNG TIN VÀ ĐỊNH HƯỚNG DỰ ÁN
+
+**Tên website:** AI Product Video Studio.
+
+**Mục tiêu:** Xây dựng nền tảng trực tuyến ứng dụng trí tuệ nhân tạo để tự động sản xuất video giới thiệu, quảng cáo, đánh giá và truyền thông sản phẩm thuộc nhiều ngành hàng khác nhau.
+
+Người dùng chỉ cần:
+
+1. Tải lên hình ảnh sản phẩm.
+2. Nhập tên và thông tin mô tả sản phẩm.
+3. Để AI phân tích hình ảnh và thông tin.
+4. Chọn chủ đề, phong cách, thời lượng và tỷ lệ video.
+5. Để AI viết kịch bản, tạo lời thoại, giọng đọc, phụ đề và các phân cảnh.
+6. Tự động dựng video.
+7. Xem trước, chỉnh sửa và tải video MP4 về thiết bị.
+
+Mục tiêu là giúp người không có kiến thức về dựng phim, thiết kế đồ họa hoặc sản xuất nội dung vẫn có thể tạo ra video giới thiệu sản phẩm có chất lượng tốt.
+
+**Tên miền chính thức:** `aivideo.xuanthang.io.vn`
+
+Các đường dẫn dự kiến:
+
+- Trang chủ: `/`
+- Đăng nhập: `/login`
+- Đăng ký: `/register`
+- Không gian tạo video: `/studio`
+- Video của tôi: `/my-videos`
+- Sản phẩm của tôi: `/products`
+- Thư viện mẫu: `/templates`
+- Thông tin tài khoản: `/profile`
+- Quản trị: `/admin`
+
+## III. NGUYÊN TẮC BẮT BUỘC KHI LÀM VIỆC VỚI MÃ NGUỒN HIỆN TẠI
+
+Đây là yêu cầu đặc biệt quan trọng và phải được tuân thủ trong toàn bộ quá trình thực hiện.
+
+### 1. Kiểm tra trước khi sửa
+
+Trước tiên, phải kiểm tra:
+
+- Repository GitHub hiện tại.
+- Nhánh mã nguồn đang sử dụng.
+- Toàn bộ cấu trúc thư mục.
+- Các file Frontend và Backend.
+- Cấu trúc database D1 và các migration.
+- Cloudflare Workers và các binding.
+- Các API đang tích hợp.
+- Cấu hình ImageKit.
+- Hệ thống đăng ký, đăng nhập và phân quyền.
+- Các chức năng đã triển khai và tình trạng hoạt động thực tế.
+- Các lỗi đã xuất hiện trong quá trình chạy website, build, deploy và gọi API.
+
+Không được suy đoán chức năng đã hoạt động chỉ dựa vào việc nhìn thấy nút bấm hoặc giao diện.
+
+### 2. Bảo toàn những nội dung đang hoạt động ổn định
+
+- Không xây dựng lại website từ đầu.
+- Không thay thế toàn bộ mã nguồn chỉ để thực hiện một yêu cầu nhỏ.
+- Không xóa các chức năng đã hoàn thành.
+- Không làm mất dữ liệu người dùng, dữ liệu sản phẩm, lịch sử video hoặc thông tin tài khoản.
+- Không tự ý thay đổi cấu trúc database nếu chưa đánh giá ảnh hưởng.
+- Không xóa hoặc tạo lại database D1.
+- Không thay đổi các thông tin cấu hình đang hoạt động nếu không cần thiết.
+- Không chuyển sang Cloudflare R2; tiếp tục ưu tiên ImageKit.
+- Không tạo thêm nhánh GitHub khi không cần thiết; sử dụng nhánh `main`.
+- Không tự ý commit hoặc push lên GitHub khi chưa được yêu cầu.
+
+Khi cần chỉnh sửa một chức năng, hãy xác định chính xác các file liên quan và chỉ sửa những phần cần thiết. Nếu phải thay đổi cấu trúc chung, phải đánh giá và bảo đảm tương thích ngược với những chức năng đang hoạt động.
+
+### 3. Quy trình thực hiện
+
+Mỗi nhóm công việc phải trải qua:
+
+1. Kiểm tra hiện trạng.
+2. Xác định nguyên nhân hoặc phần còn thiếu.
+3. Lập phương án chỉnh sửa ít ảnh hưởng nhất.
+4. Thực hiện trực tiếp.
+5. Kiểm tra lỗi cú pháp và build.
+6. Kiểm tra API và dữ liệu.
+7. Kiểm tra giao diện trên các kích thước màn hình.
+8. Nghiệm thu chức năng.
+9. Báo cáo rõ kết quả và những phần còn phụ thuộc dịch vụ bên ngoài.
+
+Không được thông báo đã hoàn thành nếu chỉ mới sửa giao diện hoặc mới build thành công mà chưa kiểm tra chức năng tương ứng.
+
+## IV. KIẾN TRÚC VÀ CÔNG NGHỆ
+
+Ưu tiên duy trì và hoàn thiện kiến trúc hiện có theo định hướng:
+
+| Thành phần | Công nghệ |
+|---|---|
+| Frontend | React + TypeScript |
+| Giao diện | Tailwind CSS |
+| Hosting | Cloudflare Pages |
+| Backend | Cloudflare Workers |
+| Database | Cloudflare D1 |
+| Lưu trữ hình ảnh | ImageKit |
+| AI phân tích hình ảnh | Gemini API hoặc mô hình tương đương |
+| AI viết kịch bản | Gemini API hoặc mô hình thay thế |
+| AI tạo hình ảnh | ComfyUI và mô hình mã nguồn mở |
+| AI tạo giọng đọc | Kokoro Vietnamese |
+| AI tạo video chuyển động | Wan 2.2, LTX-Video hoặc mô hình tương đương |
+| Dựng video | FFmpeg, FFmpeg.wasm và các công nghệ xử lý trên trình duyệt |
+| Quản lý mã nguồn | GitHub |
+
+### Nguyên tắc kiến trúc
+
+- Cloudflare đảm nhiệm quản lý tài khoản, dữ liệu, API, phân quyền và điều phối tác vụ.
+- Không sử dụng Cloudflare Workers để xử lý dựng video nặng.
+- Các tác vụ dựng video cần được xử lý bằng công nghệ phù hợp trên trình duyệt hoặc máy chủ chuyên dụng khi có điều kiện.
+- Thiết kế các module AI độc lập để có thể thay thế nhà cung cấp.
+- Không phụ thuộc vào một API duy nhất.
+- API Key chỉ được lưu ở môi trường Backend hoặc hệ thống quản lý bí mật an toàn.
+- Không để lộ API Key trong mã nguồn Frontend, trình duyệt hoặc các phản hồi API.
+- Có cơ chế kiểm soát hạn mức, hàng đợi và trạng thái xử lý.
+- Có thể bổ sung dịch vụ trả phí trong tương lai nhưng phải được Super Admin chủ động cấu hình và cho phép.
+
+### Nguyên tắc miễn phí
+
+Ưu tiên sử dụng:
+
+- Công cụ mã nguồn mở.
+- Mô hình AI có thể tự triển khai.
+- Các gói API miễn phí.
+- Các dịch vụ có hạn mức miễn phí.
+- Công nghệ xử lý trực tiếp trên máy tính người dùng.
+
+Không được tự ý đăng ký, kích hoạt, sử dụng hoặc phát sinh chi phí từ các dịch vụ AI trả phí.
+
+Nếu một chức năng cần API trả phí hoặc GPU chuyên dụng, phải thiết kế thành module tùy chọn, có thể bật/tắt và không làm ảnh hưởng đến các chức năng còn lại.
+
+Không được quảng cáo chức năng AI là miễn phí hoặc đang hoạt động nếu thực tế chưa có dịch vụ xử lý tương ứng.
+
+## V. HOÀN THIỆN CÁC CHỨC NĂNG NGHIỆP VỤ
+
+### 1. Quản lý sản phẩm
+
+Hoàn thiện các chức năng:
+
+- Tải lên từ 1–10 hình ảnh sản phẩm.
+- Hỗ trợ JPG, JPEG, PNG và WEBP.
+- Kiểm tra định dạng, kích thước và dung lượng file.
+- Xem trước hình ảnh trước khi lưu.
+- Thay đổi thứ tự hình ảnh.
+- Chọn ảnh đại diện.
+- Xóa hoặc thay thế ảnh.
+- Nhập tên sản phẩm.
+- Nhập mô tả sản phẩm.
+- Nhập đặc điểm nổi bật.
+- Nhập thương hiệu, ngành hàng và thông tin bổ sung.
+- Lưu sản phẩm vào tài khoản.
+- Chỉnh sửa, xóa và tái sử dụng sản phẩm.
+
+Ảnh gốc phải được lưu riêng, không bị ghi đè khi tạo ảnh minh họa hoặc chỉnh sửa video.
+
+### 2. AI phân tích sản phẩm
+
+AI cần thực hiện:
+
+- Nhận diện sản phẩm.
+- Phân tích màu sắc, hình dáng, chất liệu và đặc điểm nổi bật.
+- Nhận diện các chi tiết quan trọng.
+- Đọc và tổng hợp thông tin người dùng cung cấp.
+- Đề xuất điểm bán hàng nổi bật (USP).
+- Đề xuất đối tượng khách hàng.
+- Đề xuất thông điệp quảng bá.
+- Đề xuất chủ đề video phù hợp.
+
+Đặc biệt, phải hạn chế việc AI tự suy diễn thông số, công dụng, chất lượng hoặc chứng nhận sản phẩm khi không có dữ liệu xác thực.
+
+Thông tin do người dùng cung cấp phải được ưu tiên. Những nội dung AI suy luận cần được phân biệt với thông tin đã xác nhận.
+
+### 3. Thư viện chủ đề video
+
+Xây dựng thư viện chủ đề đa dạng, bao gồm:
+
+- Product Review.
+- Unboxing.
+- Product Showcase.
+- Advertisement.
+- TikTok Viral.
+- Lifestyle.
+- Comparison.
+- How-to.
+- Before & After.
+- Storytelling.
+- Luxury Commercial.
+- Educational.
+
+Các mẫu phải hỗ trợ nhiều ngành hàng:
+
+- Thời trang.
+- Giày dép, túi xách.
+- Mỹ phẩm.
+- Điện tử.
+- Đồ gia dụng.
+- Nội thất.
+- Thực phẩm, đồ uống.
+- Đồ chơi.
+- Trang sức, đồng hồ.
+- Hoa tươi, quà tặng.
+- Thiết bị công nghiệp.
+- Bất động sản.
+- Du lịch và dịch vụ.
+
+Không thiết kế hệ thống chỉ phục vụ một ngành hàng.
+
+Mỗi mẫu video cần có hình ảnh minh họa, mô tả phong cách, thời lượng gợi ý và tỷ lệ khung hình tương thích.
+
+Cho phép Admin bổ sung, chỉnh sửa, ẩn hoặc xóa mẫu video trong phạm vi quyền hạn.
+
+### 4. AI viết kịch bản
+
+Tự động tạo kịch bản theo:
+
+- Loại video.
+- Ngành hàng.
+- Đối tượng khách hàng.
+- Thông tin sản phẩm.
+- Phong cách truyền thông.
+- Thời lượng.
+- Ngôn ngữ.
+
+Hỗ trợ thời lượng 15, 30, 45, 60 và 90 giây.
+
+Kịch bản phải được chia thành từng phân cảnh. Mỗi phân cảnh có:
+
+- Thời lượng.
+- Lời thoại.
+- Nội dung hiển thị trên màn hình.
+- Hình ảnh hoặc video sử dụng.
+- Mô tả chuyển động.
+- Hiệu ứng.
+- Nhạc nền nếu cần.
+
+Cho phép tạo nhiều phương án kịch bản và chỉnh sửa trước khi dựng video.
+
+### 5. AI hình ảnh và chuyển động
+
+Hỗ trợ:
+
+- Zoom in, zoom out.
+- Pan ngang và dọc.
+- Parallax.
+- Xoay hoặc mô phỏng góc quay sản phẩm.
+- Hiệu ứng ánh sáng.
+- Làm nổi bật chi tiết sản phẩm.
+- Tạo bối cảnh sử dụng.
+- Tạo hình ảnh minh họa bằng AI.
+- Tích hợp mô hình tạo video AI khi có điều kiện.
+
+Phải phân biệt rõ:
+
+- Hình ảnh sản phẩm thực tế.
+- Hình ảnh do AI tạo.
+- Video AI mô phỏng.
+- Cảnh quay thực tế do người dùng cung cấp.
+
+Đặc biệt, với nội dung unboxing, before & after hoặc trải nghiệm sử dụng, không được khiến người xem hiểu nhầm cảnh AI mô phỏng là trải nghiệm thực tế đã được xác nhận.
+
+### 6. AI Voice
+
+Tích hợp Kokoro Vietnamese hoặc giải pháp tương đương.
+
+Hỗ trợ:
+
+- Giọng nam.
+- Giọng nữ.
+- Phong cách trẻ trung.
+- Phong cách chuyên nghiệp.
+- Phong cách sang trọng.
+- Phong cách quảng cáo sôi động.
+- Giọng review tự nhiên.
+- Tiếng Việt và khả năng mở rộng nhiều ngôn ngữ.
+
+Cho phép nghe thử giọng đọc, thay đổi giọng và tốc độ đọc.
+
+Cho phép không sử dụng giọng đọc.
+
+Nếu dịch vụ tạo giọng đọc chưa khả dụng, phải thông báo rõ và cung cấp phương án thay thế phù hợp, không tạo ra file âm thanh giả hoặc báo thành công khi chưa tạo được âm thanh.
+
+### 7. Tự động dựng video
+
+Tự động kết hợp:
+
+- Hình ảnh sản phẩm.
+- Video AI hoặc video do người dùng tải lên.
+- Chuyển động camera.
+- Hiệu ứng hình ảnh.
+- Chuyển cảnh.
+- Giọng đọc.
+- Nhạc nền.
+- Phụ đề.
+- Hiệu ứng chữ.
+- Logo thương hiệu.
+- Thông tin sản phẩm.
+- Lời kêu gọi hành động.
+
+Tỷ lệ khung hình:
+
+- 9:16.
+- 16:9.
+- 1:1.
+- 4:5.
+
+Định dạng xuất ưu tiên MP4, tương thích với TikTok, Facebook, Instagram, YouTube và website.
+
+Cần có các mức chất lượng xuất phù hợp với khả năng thiết bị.
+
+Trên thiết bị di động, phải có cơ chế kiểm tra bộ nhớ, giới hạn độ phân giải và cảnh báo khi thiết bị không đủ tài nguyên.
+
+Không được để quá trình dựng video bị treo mà không có thông báo.
+
+### 8. Trình chỉnh sửa video
+
+Hoàn thiện AI Video Studio với khả năng:
+
+- Xem trước video.
+- Chỉnh sửa lời thoại.
+- Chỉnh sửa phụ đề.
+- Thay đổi giọng đọc.
+- Thay nhạc nền.
+- Thay ảnh từng phân cảnh.
+- Điều chỉnh thứ tự phân cảnh.
+- Điều chỉnh thời lượng.
+- Thay đổi tỷ lệ khung hình.
+- Tạo lại một phân cảnh.
+- Tạo lại toàn bộ video khi người dùng yêu cầu.
+
+Mọi thao tác chỉnh sửa phải được lưu lại theo dự án, tránh mất dữ liệu khi tải lại trang.
+
+### 9. Quản lý video
+
+Người dùng có thể:
+
+- Xem danh sách video đã tạo.
+- Tìm kiếm và lọc video.
+- Xem trạng thái xử lý.
+- Xem trước video.
+- Chỉnh sửa video.
+- Tạo bản sao.
+- Tải video về.
+- Xóa video.
+- Tạo video mới từ sản phẩm đã lưu.
+
+Các trạng thái cần được quản lý rõ ràng: chờ xử lý, đang xử lý, hoàn thành, thất bại và đã hủy.
+
+Không được hiển thị trạng thái hoàn thành nếu file MP4 chưa thực sự được tạo thành công.
+
+## VI. HỆ THỐNG TÀI KHOẢN VÀ PHÂN QUYỀN – YÊU CẦU BẮT BUỘC
+
+Đây là một trong những phần cần được kiểm tra và hoàn thiện kỹ nhất.
+
+### 1. Cơ chế đăng ký và phê duyệt
+
+Người dùng đăng ký tài khoản với các thông tin:
+
+- Họ và tên.
+- Email.
+- Tên đăng nhập.
+- Mật khẩu.
+- Số điện thoại (không bắt buộc).
+- Mục đích sử dụng.
+
+Sau khi đăng ký, tài khoản phải ở trạng thái chờ phê duyệt.
+
+Chỉ sau khi Admin hoặc Super Admin phê duyệt, người dùng mới được phép sử dụng các chức năng tạo video.
+
+Các trạng thái tài khoản:
+
+- PENDING_APPROVAL.
+- APPROVED.
+- REJECTED.
+- SUSPENDED.
+- DISABLED.
+
+Việc kiểm tra trạng thái tài khoản phải được thực hiện tại Backend/API, không chỉ kiểm soát bằng giao diện.
+
+### 2. Phân cấp tài khoản
+
+Thiết kế hệ thống theo mô hình:
+
+| Cấp tài khoản | Quyền hạn |
+|---|---|
+| Super Admin | Toàn quyền hệ thống |
+| Admin | Quản trị người dùng và các chức năng được cấp |
+| User | Sử dụng các chức năng được phê duyệt |
+| Pending User | Chờ phê duyệt, chưa được tạo video |
+
+Có thể bổ sung các vai trò khác nếu cần nhưng phải bảo đảm nguyên tắc phân cấp quyền rõ ràng.
+
+### 3. Bảo vệ tài khoản Super Admin
+
+**Tài khoản Super Admin là tài khoản toàn quyền và phải được bảo vệ đặc biệt.**
+
+Các quy định bắt buộc:
+
+- Không được phép xóa tài khoản Super Admin.
+- Không được phép hủy kích hoạt tài khoản Super Admin.
+- Không được phép khóa hoặc vô hiệu hóa tài khoản Super Admin.
+- Không được phép hạ cấp quyền Super Admin.
+- Không được phép thay đổi vai trò của Super Admin.
+- Không được phép để Admin thông thường tác động đến tài khoản Super Admin.
+- Không được phép thay đổi mật khẩu Super Admin thông qua chức năng quản trị tài khoản của người khác.
+
+Đối với Super Admin tự thay đổi mật khẩu:
+
+- Phải thực hiện tại mục Thông tin tài khoản.
+- Phải có chức năng Đổi mật khẩu riêng.
+- Bắt buộc nhập mật khẩu hiện tại.
+- Nhập mật khẩu mới.
+- Xác nhận mật khẩu mới.
+- Kiểm tra mật khẩu hiện tại ở Backend.
+- Chỉ cập nhật mật khẩu khi xác thực thành công.
+
+Không được cung cấp cơ chế đổi mật khẩu Super Admin mà bỏ qua bước xác minh mật khẩu cũ.
+
+Phải có cơ chế bảo vệ cuối cùng ở Backend và Database, tránh việc gọi API trực tiếp hoặc sửa giao diện để vô hiệu hóa các quy định trên.
+
+### 4. Quyền quản lý tài khoản của Super Admin
+
+Super Admin có quyền quản lý các tài khoản khác, bao gồm:
+
+- Xem thông tin tài khoản.
+- Phê duyệt hoặc từ chối đăng ký.
+- Kích hoạt hoặc hủy kích hoạt.
+- Khóa hoặc mở khóa.
+- Xóa tài khoản.
+- Thay đổi vai trò.
+- Điều chỉnh hạn mức.
+- Đặt lại mật khẩu mà không yêu cầu mật khẩu cũ của tài khoản được quản lý.
+
+Đây là thao tác quản trị từ một tài khoản khác, không phải chức năng tự đổi mật khẩu của Super Admin.
+
+Khi đặt lại mật khẩu cho tài khoản khác, phải tạo mật khẩu mới an toàn hoặc cơ chế cấp lại mật khẩu phù hợp, đồng thời ghi nhật ký thao tác.
+
+### 5. Quyền quản lý tài khoản của Admin
+
+Admin được quản lý những tài khoản thuộc phạm vi quyền hạn được cấp.
+
+Không được phép:
+
+- Xóa Super Admin.
+- Khóa Super Admin.
+- Hủy kích hoạt Super Admin.
+- Hạ cấp Super Admin.
+- Thay đổi mật khẩu Super Admin.
+- Tự nâng cấp quyền của chính mình.
+- Tự cấp quyền vượt quá phạm vi được phân công.
+
+Admin chỉ được thao tác với tài khoản có cấp quyền thấp hơn hoặc bằng phạm vi quản lý được cấp.
+
+### 6. Chức năng thông tin tài khoản
+
+Mỗi người dùng cần có mục Thông tin tài khoản, bao gồm:
+
+- Họ tên.
+- Email.
+- Tên đăng nhập.
+- Số điện thoại.
+- Ngày đăng ký.
+- Trạng thái tài khoản.
+- Vai trò.
+- Thông tin hạn mức.
+- Đổi mật khẩu.
+
+Mọi tài khoản đều phải tự đổi mật khẩu bằng cách nhập mật khẩu hiện tại.
+
+Chỉ thao tác đặt lại mật khẩu từ tài khoản quản trị có quyền cao hơn mới được phép bỏ qua yêu cầu nhập mật khẩu cũ của tài khoản được quản lý.
+
+### 7. Bảo mật đăng nhập
+
+- Mật khẩu phải được băm bằng thuật toán an toàn.
+- Không lưu mật khẩu dạng văn bản.
+- Có cơ chế quản lý phiên đăng nhập an toàn.
+- Có chức năng đăng xuất.
+- Có cơ chế thu hồi phiên khi tài khoản bị khóa hoặc xóa.
+- Không hiển thị mật khẩu mẫu hoặc thông tin đăng nhập mặc định công khai.
+- Chống truy cập trái phép vào các API quản trị.
+- Có cơ chế giới hạn thử đăng nhập và bảo vệ các API nhạy cảm.
+
+### 8. Nhật ký quản trị
+
+Ghi nhận các hoạt động quan trọng:
+
+- Đăng nhập.
+- Đăng xuất.
+- Phê duyệt tài khoản.
+- Khóa hoặc mở khóa.
+- Xóa tài khoản.
+- Đổi mật khẩu.
+- Đặt lại mật khẩu.
+- Thay đổi quyền.
+- Thay đổi hạn mức.
+- Thay đổi cấu hình AI.
+- Các thao tác ảnh hưởng đến dữ liệu.
+
+Nhật ký cần ghi nhận người thực hiện, đối tượng bị tác động, thời gian và kết quả.
+
+## VII. GIAO DIỆN QUẢN TRỊ
+
+Xây dựng hệ thống quản trị riêng, hiện đại và dễ sử dụng.
+
+Các phân hệ:
+
+1. Dashboard tổng quan.
+2. Quản lý người dùng.
+3. Quản lý sản phẩm.
+4. Quản lý video.
+5. Quản lý kịch bản.
+6. Quản lý thư viện mẫu video.
+7. Quản lý ngành hàng.
+8. Quản lý công cụ AI.
+9. Quản lý API và cấu hình.
+10. Quản lý hạn mức sử dụng.
+11. Thống kê chi phí AI.
+12. Nhật ký hoạt động.
+13. Sao lưu dữ liệu.
+14. Cấu hình hệ thống.
+
+### Dashboard
+
+Thống kê tối thiểu:
+
+- Tổng số người dùng.
+- Số người dùng chờ phê duyệt.
+- Số người dùng đang hoạt động.
+- Số người dùng bị khóa.
+- Tổng số sản phẩm.
+- Tổng số video.
+- Video hoàn thành.
+- Video thất bại.
+- Lượt tạo video theo ngày, tuần, tháng.
+- Mức sử dụng từng công cụ AI.
+- Chi phí AI nếu có sử dụng dịch vụ trả phí.
+
+Các số liệu phải lấy từ dữ liệu thực tế, không sử dụng số liệu giả lập.
+
+### Quản lý công cụ AI
+
+Super Admin có thể:
+
+- Bật/tắt từng công cụ AI.
+- Cấu hình nhà cung cấp.
+- Cấu hình API Key.
+- Chọn mô hình mặc định.
+- Cấu hình hạn mức.
+- Theo dõi tình trạng hoạt động.
+- Theo dõi lỗi.
+- Chọn công cụ thay thế khi dịch vụ chính không khả dụng.
+
+Ví dụ:
+
+- Gemini: bật/tắt phân tích hình ảnh và viết kịch bản.
+- Kokoro: bật/tắt tạo giọng đọc.
+- ComfyUI: bật/tắt tạo hình ảnh.
+- Wan 2.2: bật/tắt tạo video AI.
+- FFmpeg: bật/tắt chức năng dựng video tương ứng.
+
+Việc tắt một công cụ không được làm hỏng các chức năng độc lập khác.
+
+## VIII. THIẾT KẾ GIAO DIỆN VÀ TỐI ƯU ĐA THIẾT BỊ
+
+Đây là yêu cầu bắt buộc đối với toàn bộ website, không chỉ trang chủ.
+
+Website phải tương thích tốt với:
+
+- Máy tính để bàn.
+- Laptop.
+- Tablet.
+- Điện thoại Android.
+- iPhone và iPad.
+
+### 1. Phong cách thiết kế
+
+Định hướng:
+
+- Hiện đại.
+- Chuyên nghiệp.
+- Công nghệ.
+- Tối giản.
+- Thân thiện.
+- Dễ thao tác.
+- Có tính thẩm mỹ cao.
+
+Ưu tiên màu sắc:
+
+- Xanh navy.
+- Trắng.
+- Xanh cyan nhạt.
+- Các màu chuyển sắc nhẹ, có kiểm soát.
+
+Không sử dụng quá nhiều hiệu ứng, màu sắc hoặc thành phần gây rối mắt.
+
+Không thiết kế giao diện giống một trang quản trị kỹ thuật khô cứng đối với khu vực người dùng thông thường.
+
+### 2. Responsive
+
+Phải kiểm tra toàn bộ:
+
+- Header.
+- Navigation.
+- Sidebar.
+- Menu.
+- Form.
+- Bảng dữ liệu.
+- Dashboard.
+- Card.
+- Modal.
+- Dropdown.
+- Bộ lọc.
+- Trình chỉnh sửa video.
+- Khu vực tải ảnh.
+- Khu vực xem trước video.
+- Footer.
+
+Trên mobile:
+
+- Không xuất hiện thanh cuộn ngang ngoài ý muốn.
+- Không bị mất nút chức năng.
+- Không bị che nội dung.
+- Không để chữ tràn khỏi khung.
+- Các nút phải đủ lớn để thao tác bằng ngón tay.
+- Menu phải dễ mở và đóng.
+- Bố cục phải tự điều chỉnh theo chiều rộng màn hình.
+- Các bảng dữ liệu cần có phương án hiển thị phù hợp.
+- Không ép giao diện desktop thu nhỏ xuống mobile.
+
+Trên tablet:
+
+- Điều chỉnh số cột hợp lý.
+- Tối ưu sidebar và khu vực nội dung.
+- Bảo đảm các thao tác chính thuận tiện.
+
+Trên laptop và desktop:
+
+- Tận dụng không gian màn hình.
+- Không để nội dung quá hẹp.
+- Căn chỉnh khoảng cách, kích thước chữ và bố cục cân đối.
+- Không để footer lơ lửng giữa trang khi nội dung ngắn.
+- Các menu và khu vực thao tác phải nhất quán.
+
+### 3. Tính nhất quán
+
+Các trang phải có chung hệ thống:
+
+- Màu sắc.
+- Font chữ.
+- Kích thước tiêu đề.
+- Khoảng cách.
+- Nút bấm.
+- Trạng thái thông báo.
+- Biểu tượng.
+- Thành phần điều hướng.
+
+Không để mỗi phân hệ có một phong cách thiết kế khác nhau.
+
+## IX. CƠ SỞ DỮ LIỆU VÀ QUẢN LÝ DỮ LIỆU
+
+Kiểm tra và hoàn thiện database D1 để bảo đảm các nghiệp vụ được quản lý đầy đủ.
+
+Các nhóm dữ liệu tối thiểu:
+
+- Users.
+- Roles và permissions.
+- Sessions.
+- Products.
+- Product images.
+- Video projects.
+- Video scenes.
+- Scripts.
+- Templates.
+- AI providers.
+- AI configurations.
+- AI usage.
+- Video jobs.
+- Activity logs.
+- System settings.
+
+Không bắt buộc phải tạo đúng các bảng trên nếu database hiện tại đã có cấu trúc tương đương.
+
+Yêu cầu:
+
+- Có khóa chính và khóa ngoại phù hợp.
+- Có chỉ mục cho các truy vấn thường xuyên.
+- Có ràng buộc dữ liệu.
+- Có kiểm soát trạng thái.
+- Có migration rõ ràng.
+- Không tạo bảng trùng lặp.
+- Không tự ý xóa dữ liệu cũ.
+- Không chạy migration phá hủy dữ liệu production.
+- Có phương án sao lưu trước khi thay đổi cấu trúc quan trọng.
+
+Dữ liệu của người dùng phải được phân tách đúng quyền truy cập. Người dùng không thể xem hoặc chỉnh sửa sản phẩm, video và dữ liệu riêng của người khác thông qua việc gọi API trực tiếp.
+
+## X. KIỂM SOÁT CHI PHÍ VÀ TÀI NGUYÊN
+
+Thiết kế cơ chế kiểm soát:
+
+- Số video tối đa mỗi ngày.
+- Số video tối đa mỗi tháng.
+- Thời lượng video tối đa.
+- Số lượng hình ảnh đầu vào.
+- Dung lượng hình ảnh.
+- Quyền sử dụng AI tạo video.
+- Quyền sử dụng giọng đọc.
+- Quyền sử dụng mô hình nâng cao.
+- Hạn mức từng nhà cung cấp AI.
+
+Khi hết hạn mức:
+
+- Thông báo rõ cho người dùng.
+- Không tiếp tục gửi yêu cầu gây phát sinh chi phí.
+- Không tự động chuyển sang API trả phí.
+- Cho phép Admin điều chỉnh hạn mức.
+- Có thể sử dụng phương án thay thế miễn phí nếu phù hợp.
+
+Có hàng đợi xử lý và cơ chế chống gửi yêu cầu lặp, tránh một thao tác tạo nhiều tác vụ hoặc nhiều lần tính phí.
+
+## XI. KIỂM THỬ VÀ NGHIỆM THU
+
+Không nghiệm thu website chỉ dựa trên việc trang web mở được hoặc build thành công.
+
+Phải kiểm tra thực tế các nhóm chức năng:
+
+### 1. Tài khoản
+
+- Đăng ký.
+- Đăng nhập.
+- Phê duyệt.
+- Từ chối.
+- Khóa.
+- Mở khóa.
+- Đổi mật khẩu.
+- Đặt lại mật khẩu.
+- Đăng xuất.
+- Phân quyền.
+- Bảo vệ Super Admin.
+- Kiểm tra truy cập API trái phép.
+
+### 2. Sản phẩm
+
+- Tải một ảnh.
+- Tải nhiều ảnh.
+- Tải ảnh sai định dạng.
+- Tải ảnh quá dung lượng.
+- Lưu sản phẩm.
+- Sửa sản phẩm.
+- Xóa sản phẩm.
+- Kiểm tra ảnh lưu trên ImageKit.
+- Kiểm tra khả năng sử dụng lại sản phẩm.
+
+### 3. AI
+
+- Phân tích hình ảnh.
+- Viết kịch bản.
+- Tạo lời thoại.
+- Tạo giọng đọc.
+- Tạo phụ đề.
+- Xử lý khi API hết hạn mức.
+- Xử lý khi API lỗi.
+- Kiểm tra không lộ API Key.
+
+### 4. Dựng video
+
+- Tạo video từ hình ảnh.
+- Kiểm tra chuyển động.
+- Kiểm tra âm thanh.
+- Kiểm tra phụ đề.
+- Kiểm tra tỷ lệ khung hình.
+- Xuất MP4.
+- Xem trước.
+- Tải xuống.
+- Tạo lại một phân cảnh.
+- Kiểm tra trên máy tính và điện thoại.
+
+### 5. Quản trị
+
+- Quản lý người dùng.
+- Quản lý sản phẩm.
+- Quản lý video.
+- Quản lý mẫu.
+- Cấu hình AI.
+- Hạn mức.
+- Nhật ký.
+- Sao lưu.
+
+### 6. Responsive
+
+Kiểm tra ít nhất các kích thước tham chiếu:
+
+- Desktop: 1920 × 1080.
+- Laptop: 1366 × 768.
+- Tablet: 768 × 1024.
+- Mobile: 390 × 844.
+- Mobile nhỏ: 360 × 800.
+
+Phải kiểm tra các trang quan trọng ở cả trạng thái chưa đăng nhập, đã đăng nhập và tài khoản quản trị.
+
+## XII. LỘ TRÌNH HOÀN THIỆN
+
+Thực hiện theo từng giai đoạn nhưng phải hướng đến một hệ thống thống nhất.
+
+**Giai đoạn 1 – Kiểm tra và ổn định nền tảng**
+
+- Rà soát toàn bộ mã nguồn.
+- Kiểm tra database.
+- Kiểm tra xác thực.
+- Kiểm tra phân quyền.
+- Sửa lỗi Backend và Frontend.
+- Hoàn thiện responsive cơ bản.
+
+**Giai đoạn 2 – Hoàn thiện nghiệp vụ sản phẩm và AI**
+
+- Quản lý sản phẩm.
+- Tải hình ảnh.
+- Phân tích sản phẩm.
+- Viết kịch bản.
+- Thư viện mẫu video.
+
+**Giai đoạn 3 – Hoàn thiện quy trình sản xuất video**
+
+- AI Voice.
+- Phụ đề.
+- Nhạc nền.
+- Dựng video.
+- Xem trước.
+- Xuất MP4.
+
+**Giai đoạn 4 – Hoàn thiện quản trị**
+
+- Quản lý người dùng.
+- Bảo vệ Super Admin.
+- Quản lý AI.
+- Hạn mức.
+- Thống kê.
+- Nhật ký.
+- Sao lưu.
+
+**Giai đoạn 5 – Tối ưu và mở rộng**
+
+- Responsive toàn diện.
+- Tối ưu hiệu suất.
+- Tối ưu trải nghiệm người dùng.
+- Tích hợp các mô hình AI nâng cao.
+- Bổ sung chỉnh sửa video.
+- Kiểm tra bảo mật.
+- Kiểm tra khả năng vận hành thực tế.
+
+Sau mỗi giai đoạn phải có kiểm tra và nghiệm thu trước khi chuyển sang giai đoạn tiếp theo.
+
+## XIII. YÊU CẦU VỀ BÁO CÁO VÀ BÀN GIAO
+
+Trong quá trình thực hiện, cần báo cáo theo từng nhóm:
+
+1. Những chức năng đã có và đang hoạt động tốt.
+2. Những chức năng đã có nhưng đang lỗi.
+3. Những chức năng chưa được triển khai.
+4. Những lỗi phát hiện trong database và Backend.
+5. Những lỗi bảo mật và phân quyền.
+6. Những phần đã sửa.
+7. Những phần đã kiểm thử thành công.
+8. Những phần chưa thể hoàn thành do phụ thuộc API, GPU hoặc dịch vụ bên ngoài.
+
+Khi hoàn thành, cung cấp:
+
+- Danh sách file đã thay đổi.
+- Những chức năng đã bổ sung.
+- Những lỗi đã xử lý.
+- Các migration đã thực hiện.
+- Kết quả build.
+- Kết quả kiểm thử.
+- Cấu hình môi trường cần thiết.
+- Các bước triển khai Cloudflare.
+- Những API hoặc dịch vụ người quản trị cần cấu hình thêm.
+
+Không được đưa ra kết luận chung chung như "website đã hoàn thiện" nếu vẫn còn chức năng chưa hoạt động.
+
+---
+
+## XIV. YÊU CẦU CUỐI CÙNG
+
+Tôi muốn nhấn mạnh 10 yêu cầu quan trọng nhất:
+
+1. Phải tiếp tục hoàn thiện website hiện tại, không xây dựng lại từ đầu.
+2. Bảo toàn tất cả dữ liệu và chức năng đang hoạt động ổn định.
+3. Kiểm tra mã nguồn mới nhất trên GitHub trước khi chỉnh sửa.
+4. Bảo vệ tuyệt đối tài khoản Super Admin theo quy định đã nêu.
+5. Đăng ký tài khoản phải được Admin phê duyệt mới được sử dụng chức năng tạo video.
+6. Các chức năng AI phải có khả năng hoạt động độc lập, thay thế và bật/tắt.
+7. Ưu tiên công cụ miễn phí, mã nguồn mở, không tự ý phát sinh chi phí.
+8. Website phải thực sự tạo được video MP4, không chỉ có giao diện mô phỏng.
+9. Toàn bộ website phải hiển thị và thao tác tốt trên PC, laptop, tablet và mobile.
+10. Mỗi thay đổi phải được kiểm tra để không gây lỗi dây chuyền hoặc phá vỡ chức năng khác.
+
+**Yêu cầu thực hiện ngay:**
+
+Bắt đầu bằng việc kiểm tra toàn diện repository, mã nguồn, Cloudflare Worker, D1, các cấu hình dịch vụ và những lỗi đã xuất hiện trong quá trình triển khai.
+
+Sau đó lập danh sách công việc theo thứ tự ưu tiên, xác định chính xác những gì đã hoàn thành và những gì còn thiếu. Tiếp tục trực tiếp sửa chữa, hoàn thiện và kiểm thử từng phần.
+
+Không yêu cầu tôi cung cấp lại những thông tin đã có trong mã nguồn, cấu hình hoặc lịch sử triển khai nếu bạn có thể tự kiểm tra.
+
+Nếu thiếu thông tin hoặc quyền truy cập cần thiết, chỉ hỏi đúng nội dung thực sự cần thiết. Không tự ý đoán cấu hình, tạo dữ liệu giả hoặc thay đổi những thiết lập quan trọng.
+
+**Mục tiêu cuối cùng: AI Product Video Studio phải trở thành một nền tảng trực tuyến thực sự có thể sử dụng, có khả năng quản lý người dùng, phân tích sản phẩm, tự động sản xuất video, chỉnh sửa và xuất video thành phẩm; đồng thời bảo đảm an toàn dữ liệu, bảo mật tài khoản, kiểm soát chi phí và khả năng mở rộng lâu dài.**
