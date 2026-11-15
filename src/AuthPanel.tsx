@@ -56,6 +56,9 @@ export default function AuthPanel({open,onClose}:Props) {
         {['SUPER_ADMIN','ADMIN'].includes(user.role)&&<div className="admin-users"><div className="auth-section-title"><Users size={17}/> Quản lý tài khoản <span>{users.length}</span></div>
           {users.map(item=><div className="admin-user-row" key={item.id}><div className="admin-user-info"><b>{item.fullName}</b><small>{item.email}</small><span>{roleName[item.role]||item.role} · {statusName[item.status]||item.status}</span></div>
             {item.role!=='SUPER_ADMIN'&&<div className="admin-user-actions">
+              <select aria-label="Vai trò tài khoản" value={item.role} onChange={e=>action(item.id,'role',{role:e.target.value})}>
+                {(user.role==='SUPER_ADMIN'?['ADMIN','EDITOR','USER']:['EDITOR','USER']).map(role=><option key={role} value={role}>{roleName[role]}</option>)}
+              </select>
               {item.status==='PENDING_APPROVAL'&&<button title="Phê duyệt" onClick={()=>action(item.id,'approve')}><Check size={15}/></button>}
               {item.status==='APPROVED'?<button title="Khóa tài khoản" onClick={()=>action(item.id,'disable')}><Ban size={15}/></button>:item.status!=='PENDING_APPROVAL'&&<button title="Mở khóa / duyệt" onClick={()=>action(item.id,'enable')}><Check size={15}/></button>}
               {user.role==='SUPER_ADMIN'&&<button title="Đặt lại mật khẩu" onClick={()=>{setResetTarget(item.id);const next=window.prompt('Nhập mật khẩu mới (ít nhất 12 ký tự):');if(next)action(item.id,'reset-password',{newPassword:next});}}><KeyRound size={15}/></button>}
