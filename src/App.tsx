@@ -569,6 +569,7 @@ export default function App() {
             {route === '/studio' && (
               <StudioPage
                 industries={industries}
+                topics={topics}
                 templates={templates}
                 quota={quota}
                 initialProductId={studioProductId}
