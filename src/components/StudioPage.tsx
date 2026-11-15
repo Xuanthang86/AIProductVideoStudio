@@ -41,11 +41,13 @@ import type {
   VideoProject,
   VideoScene,
   VideoTemplate,
+  VideoTopic,
   VoiceConfig,
 } from '../types';
 
 interface Props {
   industries: Industry[];
+  topics: VideoTopic[];
   templates: VideoTemplate[];
   quota: UserQuota | null;
   initialProductId?: string;
@@ -75,6 +77,7 @@ const RATIOS: AspectRatio[] = ['9:16', '16:9', '1:1', '4:5'];
 
 export default function StudioPage({
   industries,
+  topics,
   templates,
   quota,
   initialProductId,
@@ -594,7 +597,7 @@ export default function StudioPage({
                 <label className="field-label">
                   Loại / Chủ đề video
                   <select value={videoType} onChange={e => setVideoType(e.target.value)}>
-                    {VIDEO_TYPES.map(vt => (
+                    {(topics.length ? topics.map(topic => topic.name) : VIDEO_TYPES).map(vt => (
                       <option key={vt} value={vt}>
                         {vt}
                       </option>
