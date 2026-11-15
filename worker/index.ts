@@ -19,7 +19,7 @@ interface UserRow {
   id: string; email: string; full_name: string; password_hash: string; password_salt: string;
   role: 'SUPER_ADMIN' | 'ADMIN' | 'EDITOR' | 'USER';
   status: 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'SUSPENDED' | 'DISABLED';
-  created_at: string; approved_at: string | null; last_login_at: string | null;
+  created_at: string; approved_at: string | null; approved_by: string | null; last_login_at: string | null;
 }
 const json = (data: unknown, status = 200, headers: HeadersInit = {}) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
