@@ -123,14 +123,18 @@ export default function App() {
 
   const refreshCatalog = async () => {
     try {
-      const [tRes, iRes, topicRes] = await Promise.all([
+      const [tRes, iRes] = await Promise.all([
         api<{ templates: VideoTemplate[] }>('/api/templates'),
         api<{ industries: Industry[] }>('/api/industries'),
-        api<{ topics: VideoTopic[] }>('/api/topics'),
       ]);
       setTemplates(tRes.templates || []);
       setIndustries(iRes.industries || []);
-      setTopics(topicRes.topics || []);
+      try {
+        const topicRes = await api<{ topics: VideoTopic[] }>('/api/topics');
+        setTopics(topicRes.topics || []);
+      } catch {
+        // Keep the existing catalog usable until the topic migration is applied.
+      }
     } catch {
       // Fallback safely
     }
@@ -521,6 +525,7 @@ export default function App() {
           <TemplatesPage
             templates={templates}
             industries={industries}
+            topics={topics}
             onUseTemplate={tpl => openStudio({ template: tpl })}
           />
         )}
