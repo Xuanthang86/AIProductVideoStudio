@@ -577,8 +577,7 @@ export default function App() {
                 initialProjectId={studioProjectId}
                 onGoProducts={() => navigate('/products')}
                 onGoMyVideos={() => navigate('/my-videos')}
-              topics={topics}
-            />
+              />
             )}
             {route === '/my-videos' && (
               <MyVideosPage
