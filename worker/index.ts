@@ -49,11 +49,10 @@ async function passwordHash(password: string, salt: string, iterations = 100000)
 }
 
 async function verifyPassword(password: string, salt: string, expected: string) {
+  // Cloudflare Workers WebCrypto giới hạn PBKDF2 ở 100.000 iterations.
+  // Không thử fallback 310.000 vì sẽ phát sinh NotSupportedError và biến đăng nhập sai thành lỗi 500.
   const current = await passwordHash(password, salt, 100000);
-  if (current === expected) return true;
-
-  const legacy = await passwordHash(password, salt, 310000);
-  return legacy === expected;
+  return current === expected;
 }
 function cookie(request: Request, name: string) {
   const raw = request.headers.get('cookie') || '';
