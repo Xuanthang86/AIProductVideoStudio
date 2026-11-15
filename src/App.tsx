@@ -329,16 +329,6 @@ export default function App() {
             <div className="guest-actions">
               <button
                 type="button"
-                className="register-text-btn"
-                onClick={() => {
-                  setAuthModalMode('register');
-                  setAuthOpen(true);
-                }}
-              >
-                Đăng ký
-              </button>
-              <button
-                type="button"
                 className="login-btn"
                 onClick={() => {
                   setAuthModalMode('login');
