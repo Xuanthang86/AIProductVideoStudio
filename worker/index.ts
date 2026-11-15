@@ -302,7 +302,7 @@ function roleRank(role: string) {
 
 async function issueSession(env: Env, user: UserRow) {
   const token = hex(bytes(32));
-  const days = Math.min(30, Math.max(1, Number(env.SESSION_DAYS || 7)));
+  const days = Math.min(30, Math.max(1, Number(env.SESSION_DAYS || 30)));
   const expires = new Date(Date.now() + days * 86400000).toISOString();
   await env.DB.prepare('INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)')
     .bind(uuid(), user.id, await digest(token), expires)
@@ -727,7 +727,19 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       }
       const quota = await getOrCreateQuota(env, user.id);
       const usage = await getUserVideoUsage(env, user.id);
-      return json({ user: publicUser(user), quota, usage });
+      // Refresh the persistent session when the user opens or returns to the app.
+      // This keeps the D1 expiry and browser cookie aligned without logging out on tab close or short inactivity.
+      const token = sessionToken(request);
+      const days = Math.min(30, Math.max(1, Number(env.SESSION_DAYS || 30)));
+      const expires = new Date(Date.now() + days * 86400000).toISOString();
+      await env.DB.prepare('UPDATE sessions SET expires_at=? WHERE token_hash=?')
+        .bind(expires, await digest(token))
+        .run();
+      return json(
+        { user: publicUser(user), quota, usage },
+        200,
+        { 'set-cookie': cookieHeader(token, days * 86400, isHttpsRequest(request), isIframeRequest(request)) }
+      );
     }
 
     // Authenticated & Approved User Gate
