@@ -549,6 +549,13 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       return json({ industries: rows.results });
     }
 
+    if (path === '/api/topics' && request.method === 'GET') {
+      const rows = await env.DB.prepare(
+        'SELECT id,slug,name,is_active,sort_order FROM video_topics WHERE is_active=1 ORDER BY sort_order ASC, name ASC'
+      ).all();
+      return json({ topics: rows.results });
+    }
+
     if (path === '/api/templates' && request.method === 'GET') {
       const actor = await currentUser(request, env);
       const isAdmin = actor && roleRank(actor.role) >= roleRank('ADMIN');
@@ -1943,6 +1950,23 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           .run();
         await audit(env, actor.id, null, 'ADMIN_INDUSTRY_CREATED', { name });
         return json({ id, message: 'Đã thêm ngành hàng.' }, 201);
+      }
+
+      if (path === '/api/admin/topics' && request.method === 'POST') {
+        const data = await body(request);
+        const name = str(data.name).replace(/\\s+/g, ' ');
+        if (!name || name.length > 80) return fail('Tên chủ đề phải từ 1 đến 80 ký tự.');
+        const exists = await env.DB.prepare('SELECT id FROM video_topics WHERE name=? COLLATE NOCASE').bind(name).first();
+        if (exists) return fail('Chủ đề này đã tồn tại.', 409);
+        const id = `topic-${uuid()}`;
+        const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${id.slice(-6)}`;
+        const order = await env.DB.prepare('SELECT COALESCE(MAX(sort_order),0)+1 AS next_order FROM video_topics')
+          .first<{ next_order: number }>();
+        await env.DB.prepare(
+          'INSERT INTO video_topics(id,slug,name,is_active,sort_order) VALUES(?,?,?,1,?)'
+        ).bind(id, slug, name, order?.next_order || 1).run();
+        await audit(env, actor.id, null, 'ADMIN_VIDEO_TOPIC_CREATED', { id, name });
+        return json({ id, message: 'Đã thêm chủ đề video.' }, 201);
       }
 
       if (path === '/api/admin/ai-configs' && request.method === 'GET') {
