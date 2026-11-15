@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, Ban, Check, KeyRound, LogIn, LogOut, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
+import { ArrowRight, Ban, Check, ChevronDown, KeyRound, LogIn, LogOut, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
 import PasswordInput from './components/PasswordInput';
 import { api, roleLabel, statusLabel } from './lib/api';
 import type { User, UserQuota, UserUsage } from './types';
@@ -38,6 +38,7 @@ export default function AuthPanel({
   const [mode, setMode] = useState<'login' | 'register' | 'account'>(initialMode);
   const [user, setUser] = useState<User | null>(currentUser ?? null);
   const [users, setUsers] = useState<User[]>([]);
+  const [passwordSectionOpen, setPasswordSectionOpen] = useState(false);
 
   const [rememberLogin, setRememberLogin] = useState<boolean>(() => {
     try {
@@ -490,7 +491,7 @@ export default function AuthPanel({
                   onNavigate('/profile');
                 }}
               >
-                Hồ sơ & Hạn mức
+                {user.role === 'SUPER_ADMIN' ? 'Hồ sơ tài khoản' : 'Hồ sơ & Hạn mức'}
               </button>
               {['SUPER_ADMIN', 'ADMIN'].includes(user.role) && (
                 <button
@@ -507,57 +508,65 @@ export default function AuthPanel({
             </div>
           )}
 
-          <div className="auth-section-title">
-            <KeyRound size={17} /> Đổi mật khẩu cá nhân
-          </div>
-          <form
-            onSubmit={e => {
-              e.preventDefault();
-              changePassword();
-            }}
+          <button
+            type="button"
+            className="auth-section-toggle"
+            aria-expanded={passwordSectionOpen}
+            onClick={() => setPasswordSectionOpen(open => !open)}
           >
-            <div className="password-grid">
-              <label>
-                Mật khẩu hiện tại *
-                <PasswordInput
-                  value={currentPassword}
-                  onValueChange={setCurrentPassword}
-                  autoComplete="current-password"
-                  placeholder="Nhập mật khẩu hiện tại"
-                  clearAriaLabel="Xóa mật khẩu hiện tại"
-                />
-              </label>
-              <label>
-                Mật khẩu mới *
-                <PasswordInput
-                  value={newPassword}
-                  onValueChange={setNewPassword}
-                  autoComplete="new-password"
-                  placeholder="Tối thiểu 12 ký tự"
-                  clearAriaLabel="Xóa mật khẩu mới"
-                />
-              </label>
-            </div>
-            <label>
-              Xác nhận mật khẩu mới *
-              <PasswordInput
-                value={confirmNewPassword}
-                onValueChange={setConfirmNewPassword}
-                autoComplete="new-password"
-                placeholder="Nhập lại mật khẩu mới"
-                clearAriaLabel="Xóa xác nhận mật khẩu mới"
-              />
-            </label>
-            {passwordTooShort && <p className="field-error-note">Mật khẩu mới cần tối thiểu 12 ký tự.</p>}
-            {passwordMismatch && <p className="field-error-note">Mật khẩu xác nhận chưa khớp với mật khẩu mới.</p>}
-            <button
-              type="submit"
-              className="auth-secondary"
-              disabled={busy || !currentPassword || newPassword.length < 12 || newPassword !== confirmNewPassword}
+            <span><KeyRound size={17} /> Đổi mật khẩu cá nhân</span>
+            <ChevronDown size={17} className={passwordSectionOpen ? 'chevron-rotated' : ''} />
+          </button>
+          {passwordSectionOpen && (
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                changePassword();
+              }}
             >
-              Cập nhật mật khẩu
-            </button>
-          </form>
+              <div className="password-grid">
+                <label>
+                  Mật khẩu hiện tại *
+                  <PasswordInput
+                    value={currentPassword}
+                    onValueChange={setCurrentPassword}
+                    autoComplete="current-password"
+                    placeholder="Nhập mật khẩu hiện tại"
+                    clearAriaLabel="Xóa mật khẩu hiện tại"
+                  />
+                </label>
+                <label>
+                  Mật khẩu mới *
+                  <PasswordInput
+                    value={newPassword}
+                    onValueChange={setNewPassword}
+                    autoComplete="new-password"
+                    placeholder="Tối thiểu 12 ký tự"
+                    clearAriaLabel="Xóa mật khẩu mới"
+                  />
+                </label>
+              </div>
+              <label>
+                Xác nhận mật khẩu mới *
+                <PasswordInput
+                  value={confirmNewPassword}
+                  onValueChange={setConfirmNewPassword}
+                  autoComplete="new-password"
+                  placeholder="Nhập lại mật khẩu mới"
+                  clearAriaLabel="Xóa xác nhận mật khẩu mới"
+                />
+              </label>
+              {passwordTooShort && <p className="field-error-note">Mật khẩu mới cần tối thiểu 12 ký tự.</p>}
+              {passwordMismatch && <p className="field-error-note">Mật khẩu xác nhận chưa khớp với mật khẩu mới.</p>}
+              <button
+                type="submit"
+                className="auth-secondary"
+                disabled={busy || !currentPassword || newPassword.length < 12 || newPassword !== confirmNewPassword}
+              >
+                Cập nhật mật khẩu
+              </button>
+            </form>
+          )}
 
           {['SUPER_ADMIN', 'ADMIN'].includes(user.role) && (
             <div className="admin-users">
