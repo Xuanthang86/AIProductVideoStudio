@@ -4,7 +4,7 @@ Nền tảng tạo video sản phẩm bằng AI theo định hướng free-first
 
 ## Trạng thái
 
-Giai đoạn 1: khởi tạo nền tảng và thiết kế kiến trúc. Chưa kết nối dịch vụ AI trả phí, chưa cấu hình tên miền hoặc triển khai production.
+Giai đoạn nền tảng tài khoản: đã bổ sung mã nguồn API Worker, migration D1, giao diện đăng nhập/đăng ký, quản lý tài khoản và hướng dẫn khởi tạo Super Admin. Chưa tạo D1 production, cấu hình secrets hoặc triển khai Worker.
 
 ## Nguyên tắc
 
