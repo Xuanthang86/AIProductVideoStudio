@@ -6,7 +6,7 @@ import StudioPage from './components/StudioPage';
 import MyVideosPage from './components/MyVideosPage';
 import ProfilePage from './components/ProfilePage';
 import AdminPage from './components/AdminPage';
-import { api, roleLabel, setUnauthorizedHandler, statusLabel } from './lib/api';
+import { api, roleLabel, setUnauthorizedHandler } from './lib/api';
 import type { Industry, User, UserQuota, UserUsage, VideoTemplate, VideoTopic } from './types';
 import {
   Aperture,
@@ -24,7 +24,6 @@ import {
   Package,
   Play,
   Pause,
-  Shield,
   ShieldCheck,
   User as UserIcon,
   WandSparkles,
