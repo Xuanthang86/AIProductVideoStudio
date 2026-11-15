@@ -288,16 +288,6 @@ export default function App() {
 
               {accountMenuOpen && (
                 <div className="account-dropdown" role="menu" aria-label="Menu tài khoản">
-                  <div className="account-dropdown-head">
-                    <strong>{user.fullName}</strong>
-                    <span>{user.email}</span>
-                    <div className="account-dropdown-tags">
-                      <span>{roleLabel[user.role] || user.role}</span>
-                      <span>·</span>
-                      <span>{statusLabel[user.status] || user.status}</span>
-                    </div>
-                  </div>
-
                   <div className="account-dropdown-list">
                     <button type="button" role="menuitem" onClick={() => navigate('/profile')}>
                       <UserIcon size={16} /> Thông tin tài khoản
@@ -308,11 +298,6 @@ export default function App() {
                     <button type="button" role="menuitem" onClick={() => navigate('/my-videos')}>
                       <FolderKanban size={16} /> Video của tôi
                     </button>
-                    {['SUPER_ADMIN', 'ADMIN'].includes(user.role) && (
-                      <button type="button" role="menuitem" onClick={() => navigate('/admin')}>
-                        <Shield size={16} /> Quản trị hệ thống
-                      </button>
-                    )}
                   </div>
 
                   <div className="account-dropdown-foot">
@@ -414,10 +399,16 @@ export default function App() {
                     </div>
                   </div>
                   <div className="preview-controls">
-                    <span>
+                    <button
+                      type="button"
+                      className="preview-toggle"
+                      aria-label={heroPreviewPlaying ? 'Tạm dừng video xem trước' : 'Phát video xem trước'}
+                      aria-pressed={heroPreviewPlaying}
+                      onClick={() => setHeroPreviewPlaying(playing => !playing)}
+                    >
                       {heroPreviewPlaying ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
-                      {heroPreviewPlaying ? 'Đang phát' : 'Đã tạm dừng'}
-                    </span>
+                      {heroPreviewPlaying ? 'Đang phát' : 'Phát video'}
+                    </button>
                     <div className="timeline">
                       <i />
                     </div>
@@ -469,7 +460,7 @@ export default function App() {
                     <button
                       type="button"
                       key={format.name}
-                      className={selected === format.name ? 'format-card chosen' : 'format-card'}
+                      className="format-card"
                       onClick={() => setSelected(format.name)}
                     >
                       <div className="format-card-top">
