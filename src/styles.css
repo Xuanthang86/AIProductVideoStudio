@@ -734,8 +734,7 @@ main,
   transition: border-color 0.15s, background 0.15s;
 }
 
-.format-card:hover,
-.format-card.chosen {
+.format-card:hover {
   border-color: var(--blue);
   background: #fafcff;
 }
@@ -2894,4 +2893,109 @@ main,
     min-height: 34px;
     font-size: 12px;
   }
+}
+
+
+/* Collapsible password sections */
+.profile-password-toggle,
+.auth-section-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--navy);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.profile-password-toggle > span,
+.auth-section-toggle > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-password-toggle svg:first-child,
+.auth-section-toggle svg:first-child {
+  color: var(--blue);
+  flex: none;
+}
+
+.profile-password-toggle > svg,
+.auth-section-toggle > svg {
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+
+.profile-password-content {
+  margin-top: 14px;
+}
+
+.auth-section-toggle {
+  margin: 22px 0 10px;
+  cursor: pointer;
+}
+
+.profile-password-toggle {
+  cursor: pointer;
+}
+
+.product-stage {
+  cursor: pointer;
+  outline: none;
+}
+
+.product-stage:focus-visible {
+  box-shadow: 0 0 0 3px rgba(34, 93, 211, 0.28);
+}
+
+.product-stage.is-playing .product-object {
+  animation: hero-product-float 4.8s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.product-stage.is-playing .orbit-one {
+  animation: hero-orbit-pulse 5s ease-in-out infinite;
+}
+
+.product-stage.is-playing .orbit-two {
+  animation: hero-orbit-pulse 5s ease-in-out -2.5s infinite;
+}
+
+.product-stage.is-playing .stage-caption {
+  animation: hero-caption-glow 3.8s ease-in-out infinite;
+}
+
+.product-stage.is-playing + .preview-controls .timeline i {
+  animation: hero-preview-progress 15s linear infinite;
+}
+
+@keyframes hero-product-float {
+  0%, 100% { transform: translate(-50%, -48%) rotate(-1deg) scale(1); }
+  50% { transform: translate(-50%, -51%) rotate(1.5deg) scale(1.035); }
+}
+
+@keyframes hero-orbit-pulse {
+  0%, 100% { opacity: 0.48; transform: translate(-50%, -50%) scale(0.96); }
+  50% { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
+}
+
+@keyframes hero-caption-glow {
+  0%, 100% { opacity: 0.82; }
+  50% { opacity: 1; }
+}
+
+@keyframes hero-preview-progress {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+
+.product-stage.is-paused * {
+  animation-play-state: paused !important;
 }
