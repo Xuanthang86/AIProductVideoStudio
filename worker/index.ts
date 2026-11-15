@@ -170,7 +170,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (path === '/api/admin/users' && request.method === 'GET') {
       if (roleRank(actor.role) < roleRank('ADMIN')) return fail('Bạn không có quyền quản lý tài khoản.',403);
       const result = await env.DB.prepare('SELECT id,email,full_name,role,status,created_at,approved_at,last_login_at FROM users ORDER BY created_at DESC').all();
-      return json({ users: result.results });
+      return json({ users: result.results.map((row: Record<string, unknown>) => ({ id: row.id, email: row.email, fullName: row.full_name, role: row.role, status: row.status, createdAt: row.created_at, approvedAt: row.approved_at, lastLoginAt: row.last_login_at })) });
     }
 
     const match = path.match(/^\/api\/admin\/users\/([0-9a-f-]+)\/(approve|reject|disable|enable|role|reset-password|delete)$/);
@@ -213,7 +213,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     return fail('Không tìm thấy API.',404);
   } catch (error) {
     console.error('API error', error);
-    return fail(error instanceof Error ? error.message : 'Đã xảy ra lỗi máy chủ.',500);
+    return fail('Đã xảy ra lỗi máy chủ. Vui lòng thử lại hoặc kiểm tra nhật ký Worker.',500);
   }
 }
 export default {
