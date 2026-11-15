@@ -17,13 +17,13 @@ import {
   Film,
   FolderKanban,
   ImagePlus,
-  KeyRound,
   LayoutTemplate,
   LogOut,
   Menu,
   MonitorPlay,
   Package,
   Play,
+  Pause,
   Shield,
   ShieldCheck,
   User as UserIcon,
@@ -76,6 +76,7 @@ export default function App() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [selected, setSelected] = useState('Video quảng cáo');
+  const [heroPreviewPlaying, setHeroPreviewPlaying] = useState(true);
   const [authOpen, setAuthOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register' | 'account'>('login');
 
@@ -203,13 +204,6 @@ export default function App() {
     }
   };
 
-  const goToChangePassword = () => {
-    navigate('/profile');
-    setTimeout(() => {
-      document.getElementById('change-password')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 80);
-  };
-
   const navItems: Array<{ label: string; path: string; adminOnly?: boolean }> = [
     { label: 'Tổng quan', path: '/' },
     { label: 'Tạo video', path: '/studio' },
@@ -308,9 +302,6 @@ export default function App() {
                     <button type="button" role="menuitem" onClick={() => navigate('/profile')}>
                       <UserIcon size={16} /> Thông tin tài khoản
                     </button>
-                    <button type="button" role="menuitem" onClick={goToChangePassword}>
-                      <KeyRound size={16} /> Đổi mật khẩu
-                    </button>
                     <button type="button" role="menuitem" onClick={() => navigate('/products')}>
                       <Package size={16} /> Sản phẩm của tôi
                     </button>
@@ -387,7 +378,20 @@ export default function App() {
                     <span>STUDIO PREVIEW</span>
                     <span className="preview-spec">9:16 · 00:15</span>
                   </div>
-                  <div className="product-stage">
+                  <div
+                    className={`product-stage ${heroPreviewPlaying ? 'is-playing' : 'is-paused'}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={heroPreviewPlaying ? 'Tạm dừng xem trước' : 'Phát xem trước'}
+                    aria-pressed={heroPreviewPlaying}
+                    onClick={() => setHeroPreviewPlaying(playing => !playing)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setHeroPreviewPlaying(playing => !playing);
+                      }
+                    }}
+                  >
                     <div className="stage-orbit orbit-one" />
                     <div className="stage-orbit orbit-two" />
                     <div className="product-object">
@@ -411,7 +415,8 @@ export default function App() {
                   </div>
                   <div className="preview-controls">
                     <span>
-                      <Play size={13} fill="currentColor" /> 00:06
+                      {heroPreviewPlaying ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
+                      {heroPreviewPlaying ? 'Đang phát' : 'Đã tạm dừng'}
                     </span>
                     <div className="timeline">
                       <i />
