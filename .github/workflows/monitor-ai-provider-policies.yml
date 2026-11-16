@@ -1,0 +1,66 @@
+name: Monitor free-tier AI and provider policies
+
+on:
+  schedule:
+    # 09:00 Vietnam time (UTC+7) on the first day of every month.
+    - cron: "0 2 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: provider-policy-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Restore previous monitoring baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: .monitor-cache/latest.json
+          key: provider-policy-monitor-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            provider-policy-monitor-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compare official pricing and policy pages
+        id: monitor
+        run: python scripts/monitor_ai_provider_policies.py
+
+      - name: Create GitHub alert when source pages change
+        if: steps.monitor.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Cảnh báo: trang giá/chính sách nhà cung cấp AI đã thay đổi (${{ github.run_id }})" \
+            --label "monitoring" \
+            --body-file provider-monitor-report.md
+
+      - name: Save latest verified baseline
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: .monitor-cache/latest.json
+          key: provider-policy-monitor-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload monthly report
+        if: always() && hashFiles('provider-monitor-report.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-policy-monitor-${{ github.run_id }}
+          path: provider-monitor-report.md
+          retention-days: 90
