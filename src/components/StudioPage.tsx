@@ -46,6 +46,17 @@ import type {
   VoiceConfig,
 } from '../types';
 
+interface SceneReview {
+  sceneId: string;
+  status: 'PENDING' | 'APPROVED';
+  outputFileUrl: string;
+  fileSizeBytes: number;
+  format: 'mp4' | 'webm';
+  resolution: RenderResolution;
+  sceneSignature: string;
+  updatedAt?: string;
+}
+
 interface Props {
   industries: Industry[];
   topics: VideoTopic[];
@@ -132,6 +143,9 @@ export default function StudioPage({
   const [uploadingSceneIndex, setUploadingSceneIndex] = useState<number | null>(null);
   const [sceneAssistBusyIndex, setSceneAssistBusyIndex] = useState<number | null>(null);
   const [sceneInstructions, setSceneInstructions] = useState<Record<number, string>>({});
+  const [sceneReviews, setSceneReviews] = useState<Record<string, SceneReview>>({});
+  const [sceneRenderingIndex, setSceneRenderingIndex] = useState<number | null>(null);
+  const [sceneRenderProgress, setSceneRenderProgress] = useState(0);
 
   // MP4 Render state
   const [resolution, setResolution] = useState<RenderResolution>('720p');
@@ -162,7 +176,7 @@ export default function StudioPage({
 
   useEffect(() => {
     if (!initialProjectId) return;
-    api<{ project: VideoProject; scenes: VideoScene[] }>(`/api/projects/${initialProjectId}`)
+    api<{ project: VideoProject; scenes: VideoScene[]; sceneReviews?: SceneReview[] }>(`/api/projects/${initialProjectId}`)
       .then(res => {
         setProjectId(res.project.id);
         setTitle(res.project.title);
@@ -179,6 +193,7 @@ export default function StudioPage({
         if (res.project.voiceConfig) setVoiceConfig(res.project.voiceConfig);
         if (res.project.musicConfig) setMusicConfig(res.project.musicConfig);
         setScenes(res.scenes);
+        setSceneReviews(Object.fromEntries((res.sceneReviews || []).map(review => [review.sceneId, review])));
       })
       .catch(e => setError(e.message));
   }, [initialProjectId]);
@@ -265,7 +280,7 @@ export default function StudioPage({
       sceneProgress: progress,
       sceneIndex: idx,
       totalScenes: scenes.length,
-      productName: selectedProduct?.name || title,
+      productName: activeScene.productName || selectedProduct?.name || title,
       ctaText,
     });
   }, [previewTime, scenes, aspectRatio, ctaText, selectedProduct, title]);
@@ -350,6 +365,8 @@ export default function StudioPage({
       ...prev,
       {
         sortOrder: prev.length,
+        productId: productId || null,
+        productName: selectedProduct?.name || title,
         durationSec: 5,
         narration: 'Nội dung giới thiệu điểm nổi bật của sản phẩm.',
         onScreenText: selectedProduct?.name || 'Điểm nổi bật',
@@ -371,7 +388,8 @@ export default function StudioPage({
 
   const uploadSceneImage = async (index: number, file?: File) => {
     if (!file) return;
-    if (!productId) { setError('Vui lòng chọn sản phẩm trước khi tải ảnh riêng cho phân cảnh.'); return; }
+    const sceneProductId = scenes[index]?.productId || productId;
+    if (!sceneProductId) { setError('Vui lòng chọn sản phẩm cho phân cảnh trước khi tải ảnh.'); return; }
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setError('Ảnh phân cảnh chỉ hỗ trợ JPG, PNG hoặc WEBP.'); return; }
     if (file.size > 5 * 1024 * 1024) { setError('Dung lượng ảnh mỗi phân cảnh tối đa 5MB.'); return; }
     setUploadingSceneIndex(index); setError('');
@@ -388,11 +406,11 @@ export default function StudioPage({
         image.onerror = () => reject(new Error('Tệp tải lên không phải ảnh hợp lệ.'));
         image.src = dataUrl;
       });
-      const response = await api<{ image: Product['images'][number] }>(`/api/products/${productId}/images`, 'POST', {
+      const response = await api<{ image: Product['images'][number] }>(`/api/products/${sceneProductId}/images`, 'POST', {
         fileName: file.name, mimeType: file.type, base64: dataUrl, ...dimensions,
       });
-      updateScene(index, { imageId: response.image.id, imageUrl: response.image.imageUrl, sourceType: 'REAL_PRODUCT' });
-      setProducts(prev => prev.map(product => product.id === productId ? { ...product, images: [...product.images, response.image] } : product));
+      updateScene(index, { productId: sceneProductId, productName: products.find(p => p.id === sceneProductId)?.name || '', imageId: response.image.id, imageUrl: response.image.imageUrl, sourceType: 'REAL_PRODUCT' });
+      setProducts(prev => prev.map(product => product.id === sceneProductId ? { ...product, images: [...product.images, response.image] } : product));
       setMessage(`Đã tải ảnh riêng cho phân cảnh #${index + 1}.`);
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : 'Không thể tải ảnh phân cảnh.');
@@ -401,7 +419,8 @@ export default function StudioPage({
 
   const assistScene = async (index: number) => {
     const scene = scenes[index];
-    if (!productId || !scene?.imageId) {
+    const sceneProductId = scene?.productId || productId;
+    if (!sceneProductId || !scene?.imageId) {
       setError('Vui lòng chọn sản phẩm và tải/chọn ảnh cho phân cảnh trước khi phân tích.');
       return;
     }
@@ -413,7 +432,7 @@ export default function StudioPage({
         scene: Pick<VideoScene, 'narration' | 'onScreenText' | 'visualPrompt' | 'motionType' | 'transitionType' | 'lightingEffect'>;
         model: string;
       }>('/api/ai/scene-assist', 'POST', {
-        productId,
+        productId: sceneProductId,
         imageId: scene.imageId,
         scene: {
           narration: scene.narration,
@@ -516,11 +535,17 @@ export default function StudioPage({
       };
       if (projectId) {
         await api(`/api/projects/${projectId}`, 'PUT', payload);
+        const refreshed = await api<{ scenes: VideoScene[]; sceneReviews?: SceneReview[] }>(`/api/projects/${projectId}`);
+        setScenes(refreshed.scenes);
+        setSceneReviews(Object.fromEntries((refreshed.sceneReviews || []).map(review => [review.sceneId, review])));
         setMessage('Đã lưu toàn bộ chỉnh sửa dự án.');
         return projectId;
       } else {
         const res = await api<{ id: string }>('/api/projects', 'POST', payload);
         setProjectId(res.id);
+        const refreshed = await api<{ scenes: VideoScene[]; sceneReviews?: SceneReview[] }>(`/api/projects/${res.id}`);
+        setScenes(refreshed.scenes);
+        setSceneReviews(Object.fromEntries((refreshed.sceneReviews || []).map(review => [review.sceneId, review])));
         setMessage('Đã lưu dự án video mới.');
         return res.id;
       }
@@ -529,7 +554,115 @@ export default function StudioPage({
     }
   };
 
+  const getSceneSignature = (scene: VideoScene) => JSON.stringify({
+    productId: scene.productId || productId || '',
+    imageId: scene.imageId || '',
+    imageUrl: scene.imageUrl || '',
+    narration: scene.narration || '',
+    onScreenText: scene.onScreenText || '',
+    showOnScreenText: scene.showOnScreenText !== false,
+    durationSec: scene.durationSec,
+    sourceType: scene.sourceType,
+    aiVideoUrl: scene.aiVideoUrl || '',
+    motionType: scene.motionType,
+    transitionType: scene.transitionType,
+    lightingEffect: scene.lightingEffect,
+    visualPrompt: scene.visualPrompt || '',
+  });
+
+  const renderOneScene = async (index: number) => {
+    const scene = scenes[index];
+    if (!scene) return;
+    if (!scene.imageUrl) {
+      setError(`Vui lòng tải/chọn ảnh cho phân cảnh #${index + 1} trước khi dựng video riêng.`);
+      return;
+    }
+    setError('');
+    setMessage('');
+    setSceneRenderingIndex(index);
+    setSceneRenderProgress(1);
+    try {
+      const activeProjectId = await saveProject();
+      const saved = await api<{ scenes: VideoScene[] }>(`/api/projects/${activeProjectId}`);
+      const savedScene = saved.scenes[index];
+      if (!savedScene?.id) throw new Error('Không lấy được mã phân cảnh sau khi lưu dự án. Vui lòng thử lưu lại.');
+      const signature = getSceneSignature(savedScene);
+      const voiceovers: VoiceoverTrack[] = [];
+      if (voiceConfig.enabled && savedScene.narration.trim()) {
+        if (typeof AudioContext === 'undefined') throw new Error('Trình duyệt không hỗ trợ giải mã âm thanh để tạo giọng đọc.');
+        const tts = await api<{ available: boolean; reason?: string; audioBase64?: string }>('/api/ai/tts', 'POST', {
+          text: savedScene.narration.trim(), voice: voiceConfig.voice, speed: voiceConfig.speed,
+        });
+        if (!tts.available || !tts.audioBase64) throw new Error(tts.reason || 'Dịch vụ giọng đọc chưa sẵn sàng.');
+        const binary = atob(tts.audioBase64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const audioContext = new AudioContext();
+        try {
+          const audioBuffer = await audioContext.decodeAudioData(bytes.buffer.slice(0));
+          voiceovers.push({ audioBuffer, startSec: 0, volume: 1, playbackRate: voiceConfig.speed });
+        } finally {
+          await audioContext.close().catch(() => {});
+        }
+      }
+      const sceneProduct = products.find(p => p.id === (savedScene.productId || productId));
+      const sceneProductName = savedScene.productName || sceneProduct?.name || title;
+      const result = await renderProjectVideo({
+        scenes: [{ ...savedScene, productName: sceneProductName }],
+        voiceovers,
+        aspectRatio,
+        resolution,
+        productName: sceneProductName,
+        ctaText: '',
+        musicConfig,
+        onProgress: pct => setSceneRenderProgress(pct),
+      });
+      const form = new FormData();
+      form.append('file', result.blob, `scene-${index + 1}-${Date.now()}.${result.format}`);
+      form.append('sceneSignature', signature);
+      form.append('resolution', resolution);
+      const response = await fetch(`/api/projects/${activeProjectId}/scenes/${savedScene.id}/output`, {
+        method: 'POST', credentials: 'include', body: form,
+      });
+      const uploaded = await response.json().catch(() => ({})) as SceneReview & { error?: string };
+      if (!response.ok) throw new Error(uploaded.error || 'Không thể lưu video phân cảnh lên kho lưu trữ.');
+      setSceneReviews(prev => ({ ...prev, [savedScene.id as string]: uploaded }));
+      setMessage(`Đã dựng và lưu video riêng cho phân cảnh #${index + 1}. Hãy xem lại rồi xác nhận phân cảnh.`);
+    } catch (renderError) {
+      setError(renderError instanceof Error ? renderError.message : 'Không thể dựng video phân cảnh.');
+    } finally {
+      setSceneRenderingIndex(null);
+      setSceneRenderProgress(0);
+    }
+  };
+
+  const approveScene = async (scene: VideoScene, status: 'PENDING' | 'APPROVED') => {
+    if (!projectId || !scene.id) {
+      setError('Vui lòng lưu dự án trước khi xác nhận phân cảnh.');
+      return;
+    }
+    const signature = getSceneSignature(scene);
+    try {
+      const result = await api<{ sceneId: string; status: 'PENDING' | 'APPROVED'; sceneSignature: string }>(
+        `/api/projects/${projectId}/scenes/${scene.id}/review`, 'PATCH', { status, sceneSignature: signature },
+      );
+      setSceneReviews(prev => ({ ...prev, [result.sceneId]: { ...prev[result.sceneId], sceneId: result.sceneId, status: result.status, sceneSignature: signature } as SceneReview }));
+      setMessage(status === 'APPROVED' ? 'Đã xác nhận phân cảnh. Bạn có thể tiếp tục kiểm duyệt các cảnh còn lại.' : 'Đã bỏ xác nhận phân cảnh.');
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : 'Không thể cập nhật trạng thái duyệt.');
+    }
+  };
+
   const handleRenderMp4 = async () => {
+    const unapproved = scenes.findIndex(scene => {
+      if (!scene.id) return true;
+      const review = sceneReviews[scene.id];
+      return !review || review.status !== 'APPROVED' || review.sceneSignature !== getSceneSignature(scene) || !review.outputFileUrl;
+    });
+    if (unapproved >= 0) {
+      setError(`Chưa thể ghép video hoàn chỉnh: vui lòng dựng và xác nhận phân cảnh #${unapproved + 1} trước.`);
+      return;
+    }
     if (scenes.length === 0) {
       setError('Vui lòng tạo kịch bản hoặc thêm ít nhất 1 phân cảnh trước khi xuất video.');
       return;
@@ -870,6 +1003,17 @@ export default function StudioPage({
 
                     <div className="form-grid-2">
                       <label className="field-label">
+                        Sản phẩm của phân cảnh
+                        <select value={scene.productId || productId} onChange={e => {
+                          const nextProduct = products.find(p => p.id === e.target.value);
+                          updateScene(idx, { productId: e.target.value || null, productName: nextProduct?.name || '', imageId: null, imageUrl: '', sourceType: 'REAL_PRODUCT' });
+                        }}>
+                          <option value="">Chọn sản phẩm</option>
+                          {products.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}
+                        </select>
+                        <small className="muted-copy">Mỗi phân cảnh có thể sử dụng một sản phẩm khác nhau.</small>
+                      </label>
+                      <label className="field-label">
                         Yêu cầu AI chỉnh sửa phân cảnh
                         <textarea rows={2} value={sceneInstructions[idx] || ''} onChange={e => setSceneInstructions(prev => ({ ...prev, [idx]: e.target.value }))} placeholder="Ví dụ: tập trung cận cảnh chất liệu, lời thoại ngắn gọn và sang trọng..." />
                         <button type="button" className="secondary-btn" disabled={sceneAssistBusyIndex !== null || !scene.imageId}
@@ -907,16 +1051,38 @@ export default function StudioPage({
                       </div>
                     )}
                     <div className="btn-row">
+                      <button className="primary-btn" disabled={sceneRenderingIndex !== null || !scene.imageUrl} onClick={() => void renderOneScene(idx)}>
+                        {sceneRenderingIndex === idx ? <Loader2 size={14} className="spin" /> : <Film size={14} />}
+                        {sceneRenderingIndex === idx ? `Đang dựng ${sceneRenderProgress}%` : 'Dựng video riêng cho phân cảnh'}
+                      </button>
                       <button
                         className="secondary-btn"
                         disabled
-                        aria-disabled="true"
                         title="Đã tắt API tạo video trả phí để bảo đảm chế độ miễn phí."
                       >
                         <WandSparkles size={14} /> Tạo video AI từ ảnh (đã tắt)
                       </button>
                     </div>
-                    <small className="muted-copy">Để không phát sinh phí API, hãy dùng các hiệu ứng chuyển động camera và bộ dựng MP4 trực tiếp trên trình duyệt.</small>
+                    {scene.id && sceneReviews[scene.id] && (() => {
+                      const review = sceneReviews[scene.id];
+                      const current = review.sceneSignature === getSceneSignature(scene);
+                      return (
+                        <div className="scene-review-output">
+                          <div className="scene-review-status">
+                            <strong>{!current ? 'Bản dựng đã cũ – cần dựng lại' : review.status === 'APPROVED' ? 'Đã xác nhận phân cảnh' : 'Chờ kiểm duyệt'}</strong>
+                            <span>{review.resolution} · {formatBytes(review.fileSizeBytes || 0)}</span>
+                          </div>
+                          {current && <video src={review.outputFileUrl} controls playsInline preload="metadata" />}
+                          {current && <div className="btn-row">
+                            <a className="secondary-btn" href={review.outputFileUrl} target="_blank" rel="noreferrer">Mở video phân cảnh</a>
+                            {review.status === 'APPROVED'
+                              ? <button className="secondary-btn" onClick={() => void approveScene(scene, 'PENDING')}>Bỏ xác nhận</button>
+                              : <button className="primary-btn" onClick={() => void approveScene(scene, 'APPROVED')}>Xác nhận phân cảnh</button>}
+                          </div>}
+                        </div>
+                      );
+                    })()}
+                    <small className="muted-copy">Chỉnh sửa nội dung sẽ làm mất hiệu lực xác nhận cũ và yêu cầu dựng/duyệt lại phân cảnh.</small>
                     <label className="field-label">
                       Lời thoại / Phụ đề
                       <textarea
@@ -929,7 +1095,7 @@ export default function StudioPage({
                     <div className="form-grid-4">
                       <label className="field-label">
                         Tải ảnh riêng cho cảnh
-                        <input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploadingSceneIndex !== null || !productId}
+                        <input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploadingSceneIndex !== null || !(scene.productId || productId)}
                           onChange={e => { const file = e.target.files?.[0]; void uploadSceneImage(idx, file); e.currentTarget.value = ''; }} />
                         <small className="muted-copy">{uploadingSceneIndex === idx ? 'Đang tải ảnh lên...' : 'JPG, PNG hoặc WEBP · tối đa 5MB'}</small>
                       </label>
@@ -1151,6 +1317,8 @@ export default function StudioPage({
                 </select>
               </label>
 
+              <div className="muted-copy">Đã xác nhận {scenes.filter(scene => scene.id && sceneReviews[scene.id]?.status === 'APPROVED' && sceneReviews[scene.id]?.sceneSignature === getSceneSignature(scene)).length}/{scenes.length} phân cảnh. Chỉ có thể ghép video khi tất cả phân cảnh đã được dựng và xác nhận.</div>
+
               {safety.warning && (
                 <div className="warning-strip compact">
                   <AlertTriangle size={14} />
@@ -1175,7 +1343,7 @@ export default function StudioPage({
                 </div>
               ) : (
                 <button className="primary-btn full-width" disabled={scenes.length === 0} onClick={handleRenderMp4}>
-                  <WandSparkles size={16} /> Tự động dựng & Xuất video MP4
+                  <WandSparkles size={16} /> Xác nhận ghép các cảnh & Xuất video hoàn chỉnh
                 </button>
               )}
             </div>
