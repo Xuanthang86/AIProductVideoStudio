@@ -1287,19 +1287,11 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
     if (path === '/api/ai/tts' && request.method === 'POST') {
       const quota = await getOrCreateQuota(env, actor.id);
-      if (!quota.can_use_voice) {
-        return fail('Tài khoản của bạn chưa được cấp quyền sử dụng AI Voice.', 403);
-      }
+      if (!quota.can_use_voice) return fail('Tài khoản của bạn chưa được cấp quyền sử dụng AI Voice.', 403);
       const modCfg = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='kokoro_tts'").first<AIConfigRow>();
-      if (!modCfg?.is_enabled) {
-        return json({
-          available: false,
-          reason: 'Mô-đun Kokoro Vietnamese TTS đang được quản trị viên tắt.',
-          fallback: 'browser-speech-or-silent',
-        });
-      }
+      if (!modCfg?.is_enabled) return json({ available: false, reason: 'Mô-đun Gemini TTS tiếng Việt đang được quản trị viên tắt.', fallback: 'browser-speech-or-silent' });
       if (modCfg && !(await aiModuleWithinLimits(env, modCfg))) {
-        await logAiUsage(env, actor.id, 'kokoro_tts', 'kokoro-selfhosted', modCfg.model_name, 'tts', 'LIMIT_REACHED', 0, 0, 'AI module quota reached');
+        await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', modCfg.model_name, 'tts', 'LIMIT_REACHED', 0, 0, 'AI module quota reached');
         return json({ available: false, reason: 'Mô-đun AI Voice đã đạt hạn mức sử dụng ngày/tháng do quản trị viên thiết lập.', fallback: 'browser-speech-or-silent' });
       }
       if (!env.GEMINI_API_KEY) {
@@ -1310,31 +1302,50 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const text = str(data.text);
       const voice = str(data.voice) || 'vi-female-young';
       if (!text || text.length > 2000) return fail('Nội dung đọc phải từ 1 đến 2000 ký tự.');
-      const voiceMap: Record<string, string> = {
-        'vi-female-young': 'Aoede', 'vi-male-pro': 'Charon', 'vi-female-luxury': 'Kore',
-        'vi-ad-energetic': 'Puck', 'vi-review-natural': 'Aoede',
+      const voiceMap: Record<string, { voice: string; style: string }> = {
+        'vi-female-young': { voice: 'Aoede', style: 'Natural, youthful Vietnamese female voice; clear, warm, friendly delivery.' },
+        'vi-male-pro': { voice: 'Charon', style: 'Professional Vietnamese male voice; confident, clear, measured delivery.' },
+        'vi-female-luxury': { voice: 'Kore', style: 'Elegant Vietnamese female voice; calm, refined, premium commercial delivery.' },
+        'vi-ad-energetic': { voice: 'Puck', style: 'Energetic Vietnamese advertising voice; bright, lively, engaging delivery.' },
+        'vi-review-natural': { voice: 'Aoede', style: 'Conversational Vietnamese review voice; natural, sincere, easy to listen to.' },
       };
-      const voiceName = voiceMap[voice] || 'Aoede';
+      const selectedVoice = voiceMap[voice] || voiceMap['vi-female-young'];
       try {
-        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-lite-tts:generateContent', {
+        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
           body: JSON.stringify({
-            contents: [{ parts: [{ text }] }],
-            generationConfig: {
-              responseModalities: ['AUDIO'],
-              speechConfig: { languageCode: 'vi-VN', voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
-            },
+            model: 'gemini-3.8-flash-lite-tts',
+            input: [{
+              type: 'user_input',
+              content: [{
+                type: 'text',
+                text,
+                annotations: [{ type: 'speech_metadata', style: selectedVoice.style }],
+              }],
+            }],
+            response_format: { type: 'audio' },
+            generation_config: { speech_config: [{ voice: selectedVoice.voice }] },
           }),
         });
         if (!resp.ok) throw new Error(`Gemini TTS HTTP ${resp.status}: ${(await resp.text()).slice(0, 400)}`);
-        const payload = await resp.json() as { candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }> };
-        const audioPart = payload.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data)?.inlineData;
-        if (!audioPart?.data) throw new Error('Gemini TTS không trả về dữ liệu âm thanh.');
+        const payload = await resp.json() as {
+          output_audio?: { data?: string; mime_type?: string };
+          outputAudio?: { data?: string; mimeType?: string };
+          interaction?: { output_audio?: { data?: string; mime_type?: string }; outputAudio?: { data?: string; mimeType?: string } };
+          output?: Array<{ type?: string; data?: string; mime_type?: string; mimeType?: string }>;
+        };
+        const audioPart = payload.output_audio || payload.outputAudio || payload.interaction?.output_audio || payload.interaction?.outputAudio;
+        const outputAudio = audioPart?.data
+          ? { data: audioPart.data, mimeType: audioPart.mime_type || audioPart.mimeType || 'audio/wav' }
+          : payload.output?.find(part => part.type === 'audio' && part.data)
+            ? { data: payload.output.find(part => part.type === 'audio' && part.data)!.data!, mimeType: payload.output.find(part => part.type === 'audio' && part.data)!.mime_type || payload.output.find(part => part.type === 'audio' && part.data)!.mimeType || 'audio/wav' }
+            : null;
+        if (!outputAudio?.data) throw new Error('Gemini TTS không trả về dữ liệu âm thanh.');
         await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', 'gemini-3.8-flash-lite-tts', 'tts', 'SUCCESS', text.length, 0);
         await env.DB.prepare("UPDATE ai_configs SET provider='google-gemini',model_name='gemini-3.8-flash-lite-tts',last_status='READY',last_error=NULL,updated_at=? WHERE module_key='kokoro_tts'")
           .bind(new Date().toISOString()).run();
-        return json({ available: true, mimeType: audioPart.mimeType || 'audio/wav', audioBase64: audioPart.data, provider: 'Gemini TTS' });
+        return json({ available: true, mimeType: outputAudio.mimeType, audioBase64: outputAudio.data, provider: 'Gemini TTS' });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Gemini TTS error';
         await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', 'gemini-3.8-flash-lite-tts', 'tts', 'ERROR', 0, 0, msg);
