@@ -560,6 +560,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         capabilities: {
           geminiConfigured: Boolean(env.GEMINI_API_KEY),
           falConfigured: Boolean(env.FAL_KEY),
+          paidVideoGenerationEnabled: false,
           imagekitConfigured: Boolean(env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT),
           kokoroConfigured: Boolean(env.KOKORO_TTS_URL),
           comfyuiConfigured: Boolean(env.COMFYUI_API_URL),
@@ -1135,7 +1136,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
               : m.module_key === 'kokoro_tts'
                 ? Boolean(env.GEMINI_API_KEY)
                 : m.module_key === 'wan_video'
-                  ? Boolean(env.FAL_KEY && env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT)
+                  ? false
                   : m.module_key === 'comfyui_image'
                   ? Boolean(env.COMFYUI_API_URL)
                   : false,
@@ -1357,6 +1358,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     }
 
     if (path === '/api/ai/video/submit' && request.method === 'POST') {
+      // Free-only policy: never enqueue a paid fal.ai generation from production.
+      // Browser-based MP4 rendering remains available and does not call a paid video API.
+      return fail('Tạo video AI chuyển động bằng API fal.ai đã được tắt để tránh phát sinh phí. Bạn vẫn có thể dựng và xuất MP4 miễn phí bằng bộ dựng video trực tiếp trên trình duyệt.', 410);
       const quota = await getOrCreateQuota(env, actor.id);
       if (!quota.can_use_ai_video && actor.role !== 'SUPER_ADMIN') return fail('Tài khoản chưa được cấp quyền tạo video AI.', 403);
       const modCfg = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='wan_video'").first<AIConfigRow>();
