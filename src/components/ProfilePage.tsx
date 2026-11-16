@@ -16,7 +16,9 @@ export default function ProfilePage({ user, quota, usage, onUserUpdated }: Props
   const [fullName, setFullName] = useState(user.fullName);
   const [phone, setPhone] = useState(user.phone || '');
   const [purpose, setPurpose] = useState(user.purpose || '');
-  const [passwordSectionOpen, setPasswordSectionOpen] = useState(true);
+  const [passwordSectionOpen, setPasswordSectionOpen] = useState(() =>
+    typeof window === 'undefined' || !window.matchMedia('(max-width: 680px)').matches
+  );
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');

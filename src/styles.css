@@ -3163,3 +3163,39 @@ main,
     font-size: 13.5px;
   }
 }
+
+
+/* Collapsible account creation panel on compact screens */
+.admin-create-user-panel {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 18px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8faff;
+}
+.admin-create-user-panel .admin-create-user {
+  margin: 0;
+  background: var(--surface);
+}
+.admin-create-user-toggle {
+  margin: 0;
+  min-height: 38px;
+  cursor: pointer;
+}
+@media (max-width: 680px) {
+  .admin-create-user-panel {
+    padding: 11px;
+    gap: 8px;
+  }
+  .admin-create-user-toggle {
+    font-size: 15.5px;
+  }
+  .profile-password-toggle,
+  .admin-create-user-toggle {
+    min-height: 42px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Activity,
+  ChevronDown,
   Ban,
   BarChart3,
   Check,
@@ -65,6 +66,9 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
   const [newAccount, setNewAccount] = useState({
     fullName: '', email: '', username: '', phone: '', purpose: '', password: '', role: 'USER',
   });
+  const [createAccountOpen, setCreateAccountOpen] = useState(() =>
+    typeof window === 'undefined' || !window.matchMedia('(max-width: 680px)').matches
+  );
   const [products, setProducts] = useState<Array<Record<string, unknown>>>([]);
   const [projects, setProjects] = useState<Array<Record<string, unknown>>>([]);
   const [templates, setTemplates] = useState<VideoTemplate[]>([]);
@@ -426,8 +430,19 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
               <div className="panel-card-head">
                 <h3>Quản lý tài khoản & phê duyệt ({users.length})</h3>
               </div>
-              <form className="admin-create-user" onSubmit={createManagedUser}>
-                <h4><Plus size={17} /> Tạo tài khoản mới</h4>
+              <div className="admin-create-user-panel">
+                <button
+                  type="button"
+                  className="auth-section-toggle admin-create-user-toggle"
+                  aria-expanded={createAccountOpen}
+                  aria-controls="admin-create-user-content"
+                  onClick={() => setCreateAccountOpen(open => !open)}
+                >
+                  <span><Plus size={17} /> Tạo tài khoản mới</span>
+                  <ChevronDown size={18} className={createAccountOpen ? 'chevron-rotated' : ''} />
+                </button>
+                {createAccountOpen && (
+                  <form id="admin-create-user-content" className="admin-create-user" onSubmit={createManagedUser}>
                 <p>Tạo và kích hoạt tài khoản trực tiếp. Người dùng vẫn có thể tự đăng ký và chờ Admin phê duyệt như hiện tại.</p>
                 <div className="form-grid-2">
                   <label className="field-label">Họ và tên *<input value={newAccount.fullName} onChange={e => setNewAccount(v => ({ ...v, fullName: e.target.value }))} autoComplete="name" required /></label>
@@ -439,7 +454,9 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                 </div>
                 <label className="field-label">Mục đích sử dụng<input value={newAccount.purpose} onChange={e => setNewAccount(v => ({ ...v, purpose: e.target.value }))} maxLength={500} /></label>
                 <button type="submit" className="primary-btn" disabled={busy}>{busy ? 'Đang tạo tài khoản…' : 'Tạo tài khoản và kích hoạt'}</button>
-              </form>
+                  </form>
+                )}
+              </div>
               <div className="table-scroll">
                 <table className="data-table">
                   <thead>
