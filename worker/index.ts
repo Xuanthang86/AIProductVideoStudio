@@ -1358,45 +1358,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     }
 
     if (path === '/api/ai/video/submit' && request.method === 'POST') {
-      // Free-only policy: never enqueue a paid fal.ai generation from production.
-      // Browser-based MP4 rendering remains available and does not call a paid video API.
+      // Free-only policy: this endpoint never submits a paid fal.ai generation.
+      // Use the browser-based MP4 renderer below for zero-API-cost video output.
       return fail('Tạo video AI chuyển động bằng API fal.ai đã được tắt để tránh phát sinh phí. Bạn vẫn có thể dựng và xuất MP4 miễn phí bằng bộ dựng video trực tiếp trên trình duyệt.', 410);
-      const quota = await getOrCreateQuota(env, actor.id);
-      if (!quota.can_use_ai_video && actor.role !== 'SUPER_ADMIN') return fail('Tài khoản chưa được cấp quyền tạo video AI.', 403);
-      const modCfg = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='wan_video'").first<AIConfigRow>();
-      if (!modCfg?.is_enabled) return fail('Mô-đun tạo video AI đang được quản trị viên tắt.', 503);
-      if (!env.FAL_KEY) return fail('Chưa cấu hình FAL_KEY trong Cloudflare Worker Secrets. Không cần máy chủ GPU riêng; dịch vụ tạo video được cung cấp trên nền tảng fal.ai.', 503);
-      if (!env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) return fail('Cần cấu hình ImageKit để lưu video AI sau khi tạo.', 503);
-      if (!(await aiModuleWithinLimits(env, modCfg))) return fail('Mô-đun tạo video AI đã đạt hạn mức ngày/tháng.', 429);
-      const data = await body(request);
-      const projectId = str(data.projectId);
-      const sceneIndex = Math.max(0, Math.floor(num(data.sceneIndex)));
-      const prompt = str(data.prompt);
-      const imageUrl = str(data.imageUrl);
-      const project = await env.DB.prepare('SELECT id FROM video_projects WHERE id=? AND user_id=?').bind(projectId, actor.id).first();
-      if (!project) return fail('Không tìm thấy dự án hoặc bạn không có quyền truy cập.', 404);
-      if (!prompt || prompt.length > 1500) return fail('Mô tả chuyển động phải từ 1 đến 1500 ký tự.');
-      if (!imageUrl) return fail('Phân cảnh cần có ảnh sản phẩm để tạo video AI.');
-      const parsedImageUrl = new URL(imageUrl);
-      if (parsedImageUrl.origin !== new URL(env.IMAGEKIT_URL_ENDPOINT).origin || parsedImageUrl.protocol !== 'https:') return fail('Ảnh đầu vào phải được lưu trên ImageKit đã cấu hình.', 400);
-      const endpoint = 'minimax/h3-max/image-to-video';
-      const falResponse = await fetch(`https://queue.fal.run/${endpoint}`, {
-        method: 'POST',
-        headers: { authorization: `Key ${env.FAL_KEY}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ image_url: imageUrl, prompt, duration: 5, resolution: '768P', prompt_expansion_mode: 'balanced', enable_safety_checker: true }),
-      });
-      if (!falResponse.ok) {
-        const detail = (await falResponse.text()).slice(0, 400);
-        await logAiUsage(env, actor.id, 'wan_video', 'fal.ai', modCfg.model_name, 'image-to-video', 'ERROR', 0, 0, detail);
-        return fail(`Dịch vụ tạo video AI từ chối yêu cầu (${falResponse.status}): ${detail}`, 502);
-      }
-      const queued = await falResponse.json() as { request_id?: string };
-      if (!queued.request_id) return fail('Dịch vụ video AI không trả về mã tác vụ hợp lệ.', 502);
-      const jobId = uuid();
-      await env.DB.prepare('INSERT INTO ai_video_jobs(id,user_id,project_id,scene_index,provider_request_id,status) VALUES(?,?,?,?,?,?)')
-        .bind(jobId, actor.id, projectId, sceneIndex, queued.request_id, 'IN_QUEUE').run();
-      await logAiUsage(env, actor.id, 'wan_video', 'fal.ai', modCfg.model_name, 'image-to-video', 'QUEUED', 0, 0);
-      return json({ jobId, status: 'IN_QUEUE', provider: 'fal.ai', model: modCfg.model_name });
     }
 
     const aiVideoStatusMatch = path.match(/^\/api\/ai\/video\/status\/([0-9a-f-]+)$/);
