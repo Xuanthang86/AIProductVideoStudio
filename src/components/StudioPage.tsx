@@ -854,12 +854,17 @@ export default function StudioPage({
                       </div>
                     )}
                     <div className="btn-row">
-                      <button className="secondary-btn" disabled={aiVideoBusy !== null || !scene.imageUrl} onClick={() => generateAiSceneVideo(idx)}>
-                        {aiVideoBusy === idx ? <><Loader2 size={14} /> Đang tạo video AI...</> : <><WandSparkles size={14} /> {scene.aiVideoUrl ? 'Tạo lại video AI' : 'Tạo video AI từ ảnh này'}</>}
+                      <button
+                        className="secondary-btn"
+                        disabled
+                        aria-disabled="true"
+                        title="Đã tắt API tạo video trả phí để bảo đảm chế độ miễn phí."
+                      >
+                        <WandSparkles size={14} /> Tạo video AI từ ảnh (đã tắt)
                       </button>
                       {aiVideoBusy === idx && <span className="muted-copy">{aiVideoStatus}</span>}
                     </div>
-                    <small className="muted-copy">MiniMax H3 Max qua fal.ai: clip 5 giây 768p khoảng 0,40 USD theo giá hiện hành; giá có thể thay đổi.</small>
+                    <small className="muted-copy">Để không phát sinh phí API, hãy dùng các hiệu ứng chuyển động camera và bộ dựng MP4 trực tiếp trên trình duyệt.</small>
                     <label className="field-label">
                       Lời thoại / Phụ đề
                       <textarea
