@@ -3,6 +3,12 @@ import type { AspectRatio, MusicConfig, VideoScene } from '../types';
 
 export type RenderResolution = '480p' | '720p' | '1080p';
 
+export interface VoiceoverTrack {
+  audioBuffer: AudioBuffer;
+  startSec: number;
+  volume?: number;
+}
+
 export interface RenderResult {
   blob: Blob;
   format: 'mp4' | 'webm';
@@ -320,14 +326,25 @@ export function drawSceneFrame(
   ctx.restore();
 }
 
-async function synthesizeMusicTrack(totalDurationSec: number, music: MusicConfig, sampleRate = 44100): Promise<AudioBuffer> {
+async function synthesizeMusicTrack(
+  totalDurationSec: number,
+  music: MusicConfig,
+  sampleRate = 44100,
+  voiceovers: VoiceoverTrack[] = []
+): Promise<AudioBuffer> {
   const frameCount = Math.ceil(totalDurationSec * sampleRate);
   const offline = new OfflineAudioContext(2, frameCount, sampleRate);
-
-  if (!music.enabled || music.volume <= 0) {
-    return offline.startRendering();
+  for (const clip of voiceovers) {
+    if (!clip.audioBuffer || clip.startSec >= totalDurationSec) continue;
+    const source = offline.createBufferSource();
+    source.buffer = clip.audioBuffer;
+    const gain = offline.createGain();
+    gain.gain.value = Math.min(1.5, Math.max(0, clip.volume ?? 1));
+    source.connect(gain);
+    gain.connect(offline.destination);
+    source.start(Math.max(0, clip.startSec));
   }
-
+  if (!music.enabled || music.volume <= 0) return offline.startRendering();
   const master = offline.createGain();
   master.gain.setValueAtTime(Math.min(0.45, Math.max(0.05, music.volume)), 0);
   master.connect(offline.destination);
@@ -389,10 +406,11 @@ export async function renderProjectVideo(options: {
   productName: string;
   ctaText: string;
   musicConfig: MusicConfig;
+  voiceovers?: VoiceoverTrack[];
   signal?: AbortSignal;
   onProgress: (percent: number, stageText: string) => void;
 }): Promise<RenderResult> {
-  const { scenes, aspectRatio, resolution, productName, ctaText, musicConfig, signal, onProgress } = options;
+  const { scenes, aspectRatio, resolution, productName, ctaText, musicConfig, voiceovers = [], signal, onProgress } = options;
   if (scenes.length === 0) {
     throw new Error('Cần ít nhất 1 phân cảnh để dựng video.');
   }
@@ -429,6 +447,7 @@ export async function renderProjectVideo(options: {
         audioSupported = Boolean(support.supported);
       }
 
+      if (!audioSupported && (voiceovers.length > 0 || musicConfig.enabled)) throw new Error('Bộ mã hóa âm thanh AAC không được hỗ trợ; chuyển sang chế độ ghi hình tương thích.');
       const target = new ArrayBufferTarget();
       const muxer = new Muxer({
         target,
@@ -480,7 +499,8 @@ export async function renderProjectVideo(options: {
 
       if (audioSupported) {
         onProgress(18, 'Đang tổng hợp âm thanh nền...');
-        const audioBuffer = await synthesizeMusicTrack(totalDurationSec, musicConfig, 44100);
+        onProgress(18, voiceovers.length ? 'Đang phối giọng đọc và nhạc nền...' : 'Đang tổng hợp âm thanh nền...');
+        const audioBuffer = await synthesizeMusicTrack(totalDurationSec, musicConfig, 44100, voiceovers);
         const audioEncoder = new AudioEncoder({
           output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
           error: err => {
@@ -587,11 +607,30 @@ export async function renderProjectVideo(options: {
 
   onProgress(20, 'Đang chuyển sang chế độ ghi hình MediaRecorder...');
   const stream = canvas.captureStream(fps);
-  const mimeType = MediaRecorder.isTypeSupported('video/mp4')
-    ? 'video/mp4'
-    : MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-      ? 'video/webm;codecs=vp9'
-      : 'video/webm';
+  let audioContext: AudioContext | null = null;
+  if (voiceovers.length > 0 || musicConfig.enabled) {
+    if (typeof AudioContext === 'undefined') {
+      if (voiceovers.length > 0) throw new Error('Trình duyệt không hỗ trợ phối giọng đọc vào video.');
+    } else {
+      audioContext = new AudioContext();
+      const mixedAudio = await synthesizeMusicTrack(totalDurationSec, musicConfig, 44100, voiceovers);
+      const source = audioContext.createBufferSource();
+      source.buffer = mixedAudio;
+      const destination = audioContext.createMediaStreamDestination();
+      source.connect(destination);
+      destination.stream.getAudioTracks().forEach(track => stream.addTrack(track));
+      await audioContext.resume();
+      source.start();
+    }
+  }
+  const hasAudioTrack = stream.getAudioTracks().length > 0;
+  const mimeType = hasAudioTrack && MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+    ? 'video/webm;codecs=vp9,opus'
+    : MediaRecorder.isTypeSupported('video/mp4')
+      ? 'video/mp4'
+      : MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : 'video/webm';
 
   const recorder = new MediaRecorder(stream, { mimeType });
   const chunks: BlobPart[] = [];
@@ -644,6 +683,7 @@ export async function renderProjectVideo(options: {
 
   recorder.stop();
   const blob = await stopped;
+  if (audioContext) await audioContext.close().catch(() => {});
   const format = mimeType.includes('mp4') ? 'mp4' : 'webm';
   onProgress(100, 'Hoàn tất dựng video!');
   return {

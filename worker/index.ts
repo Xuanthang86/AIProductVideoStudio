@@ -373,6 +373,14 @@ async function logAiUsage(
     .run();
 }
 
+async function aiModuleWithinLimits(env: Env, config: AIConfigRow): Promise<boolean> {
+  const daily = await env.DB.prepare("SELECT COUNT(*) AS count FROM ai_usage_logs WHERE module_key=? AND status='SUCCESS' AND substr(created_at,1,10)=date('now')")
+    .bind(config.module_key).first<{ count: number }>();
+  const monthly = await env.DB.prepare("SELECT COUNT(*) AS count FROM ai_usage_logs WHERE module_key=? AND status='SUCCESS' AND substr(created_at,1,7)=strftime('%Y-%m','now')")
+    .bind(config.module_key).first<{ count: number }>();
+  return (daily?.count || 0) < Math.max(0, config.daily_limit) && (monthly?.count || 0) < Math.max(0, config.monthly_limit);
+}
+
 function buildStructuredFreeAnalysis(input: {
   name: string;
   brand: string;
@@ -520,6 +528,20 @@ async function uploadToImageKit(
     throw new Error(`ImageKit upload failed (${resp.status}): ${errText.slice(0, 200)}`);
   }
   const result = (await resp.json()) as { url: string; fileId: string };
+  return { url: result.url, fileId: result.fileId };
+}
+
+async function uploadVideoToImageKit(env: Env, file: File): Promise<{ url: string; fileId: string }> {
+  if (!env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) throw new HttpError(503, 'ImageKit chưa được cấu hình để lưu trữ video lâu dài.');
+  const form = new FormData();
+  form.append('file', file, file.name || 'video.mp4');
+  form.append('fileName', `${crypto.randomUUID()}-${(file.name || 'video.mp4').replace(/[^a-zA-Z0-9._-]/g, '-')}`);
+  form.append('folder', '/ai-product-video-studio/videos');
+  const auth = btoa(`${env.IMAGEKIT_PRIVATE_KEY}:`);
+  const resp = await fetch('https://upload.imagekit.io/api/v1/files/upload', { method: 'POST', headers: { authorization: `Basic ${auth}` }, body: form });
+  if (!resp.ok) { const detail = await resp.text(); throw new HttpError(502, `ImageKit không thể lưu video (${resp.status}): ${detail.slice(0, 180)}`); }
+  const result = await resp.json() as { url: string; fileId: string };
+  if (!result.url || !result.fileId) throw new HttpError(502, 'ImageKit trả về thông tin tệp không hợp lệ.');
   return { url: result.url, fileId: result.fileId };
 }
 
@@ -1132,28 +1154,44 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       if (!product) return fail('Không tìm thấy sản phẩm.', 404);
 
       const images = await env.DB.prepare(
-        'SELECT mime_type,data_base64 FROM product_images WHERE product_id=? ORDER BY is_primary DESC, sort_order ASC'
+        'SELECT mime_type,data_base64,image_url,storage_provider FROM product_images WHERE product_id=? ORDER BY is_primary DESC, sort_order ASC'
       )
         .bind(productId)
-        .all<{ mime_type: string; data_base64: string | null }>();
+        .all<{ mime_type: string; data_base64: string | null; image_url: string; storage_provider: string }>();
 
       const highlights = safeJsonParse<string[]>(String(product.highlights_json || '[]'), []);
       const modCfg = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='gemini_analysis'").first<AIConfigRow>();
       const primaryImg = images.results[0];
 
+      let imageBase64 = primaryImg?.data_base64 || undefined;
+      let imageMimeType = primaryImg?.mime_type || undefined;
+      // Fetch ImageKit-backed images only from the configured CDN origin.
+      if (!imageBase64 && primaryImg?.image_url && env.IMAGEKIT_URL_ENDPOINT) {
+        try {
+          const imageUrl = new URL(String(primaryImg.image_url));
+          if (imageUrl.origin !== new URL(env.IMAGEKIT_URL_ENDPOINT).origin) throw new Error('Image URL is outside the configured ImageKit origin.');
+          const imageResponse = await fetch(imageUrl.toString(), { redirect: 'error' });
+          if (!imageResponse.ok) throw new Error(`ImageKit image fetch failed (${imageResponse.status}).`);
+          const mime = (imageResponse.headers.get('content-type') || imageMimeType || '').split(';')[0].toLowerCase();
+          if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(mime)) throw new Error('Unsupported image content type.');
+          const imageBytes = new Uint8Array(await imageResponse.arrayBuffer());
+          if (imageBytes.byteLength > 5 * 1024 * 1024) throw new Error('Image exceeds the 5MB analysis limit.');
+          let binary = '';
+          for (let offset = 0; offset < imageBytes.length; offset += 0x8000) binary += String.fromCharCode(...imageBytes.subarray(offset, Math.min(offset + 0x8000, imageBytes.length)));
+          imageBase64 = btoa(binary);
+          imageMimeType = mime;
+        } catch (imageError) {
+          console.warn('Gemini image retrieval skipped; using text-only product data:', imageError);
+        }
+      }
       const inputPayload = {
-        name: String(product.name),
-        brand: String(product.brand || ''),
-        industry: String(product.industry),
-        description: String(product.description || ''),
-        highlights,
-        extraInfo: String(product.extra_info || ''),
-        imageBase64: primaryImg?.data_base64 || undefined,
-        imageMimeType: primaryImg?.mime_type || undefined,
+        name: String(product.name), brand: String(product.brand || ''), industry: String(product.industry),
+        description: String(product.description || ''), highlights, extraInfo: String(product.extra_info || ''),
+        imageBase64, imageMimeType,
       };
 
       let analysis: unknown;
-      if (modCfg?.is_enabled && env.GEMINI_API_KEY && env.AI_CALLER?.analyzeProduct) {
+      if (modCfg?.is_enabled && env.GEMINI_API_KEY && env.AI_CALLER?.analyzeProduct && await aiModuleWithinLimits(env, modCfg)) {
         try {
           analysis = await env.AI_CALLER.analyzeProduct(inputPayload);
           await logAiUsage(env, actor.id, 'gemini_analysis', 'google-genai', modCfg.model_name, 'analyze-product', 'SUCCESS', 650, 0);
@@ -1221,7 +1259,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       };
 
       let result: unknown;
-      if (modCfg?.is_enabled && env.GEMINI_API_KEY && env.AI_CALLER?.generateScripts) {
+      if (modCfg?.is_enabled && env.GEMINI_API_KEY && env.AI_CALLER?.generateScripts && await aiModuleWithinLimits(env, modCfg)) {
         try {
           result = await env.AI_CALLER.generateScripts(inputPayload);
           await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', modCfg.model_name, 'generate-script', 'SUCCESS', 900, 0);
@@ -1256,6 +1294,10 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           reason: 'Mô-đun Kokoro Vietnamese TTS đang được quản trị viên tắt.',
           fallback: 'browser-speech-or-silent',
         });
+      }
+      if (modCfg && !(await aiModuleWithinLimits(env, modCfg))) {
+        await logAiUsage(env, actor.id, 'kokoro_tts', 'kokoro-selfhosted', modCfg.model_name, 'tts', 'LIMIT_REACHED', 0, 0, 'AI module quota reached');
+        return json({ available: false, reason: 'Mô-đun AI Voice đã đạt hạn mức sử dụng ngày/tháng do quản trị viên thiết lập.', fallback: 'browser-speech-or-silent' });
       }
       if (!env.KOKORO_TTS_URL) {
         await logAiUsage(env, actor.id, 'kokoro_tts', 'kokoro-selfhosted', modCfg.model_name, 'tts', 'UNAVAILABLE', 0, 0, 'KOKORO_TTS_URL not configured');
@@ -1332,6 +1374,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           outputFormat: r.output_format,
           outputResolution: r.output_resolution,
           outputSizeBytes: r.output_size_bytes,
+          outputFileUrl: r.output_file_url || null,
           errorMessage: r.error_message,
           createdAt: r.created_at,
           updatedAt: r.updated_at,
@@ -1463,6 +1506,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             outputFormat: project.output_format,
             outputResolution: project.output_resolution,
             outputSizeBytes: project.output_size_bytes,
+            outputFileUrl: project.output_file_url || null,
             errorMessage: project.error_message,
             createdAt: project.created_at,
             updatedAt: project.updated_at,
@@ -1650,7 +1694,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       )
         .bind(jobId, projectId, actor.id, resolution, format, now, now)
         .run();
-      await env.DB.prepare("UPDATE video_projects SET status='PROCESSING',error_message=NULL,updated_at=? WHERE id=?")
+      await env.DB.prepare("UPDATE video_projects SET status='PROCESSING',error_message=NULL,output_file_url=NULL,output_imagekit_file_id=NULL,updated_at=? WHERE id=?")
         .bind(now, projectId)
         .run();
       return json({ jobId }, 201);
@@ -1709,6 +1753,27 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .run();
 
       return json({ message: 'Đã cập nhật trạng thái dựng video.' });
+    }
+
+    const jobUploadMatch = path.match(/^\/api\/projects\/([0-9a-f-]+)\/jobs\/([0-9a-f-]+)\/upload$/);
+    if (jobUploadMatch && request.method === 'POST') {
+      const [, projectId, jobId] = jobUploadMatch;
+      const ownedJob = await env.DB.prepare('SELECT id FROM video_jobs WHERE id=? AND project_id=? AND user_id=?')
+        .bind(jobId, projectId, actor.id).first();
+      if (!ownedJob) return fail('Không tìm thấy tác vụ dựng video.', 404);
+      const form = await request.formData();
+      const file = form.get('file');
+      if (!(file instanceof File)) return fail('Không tìm thấy tệp video cần lưu.');
+      if (!['video/mp4', 'video/webm'].includes(file.type)) return fail('Chỉ hỗ trợ video MP4 hoặc WebM.');
+      if (file.size <= 0 || file.size > 50 * 1024 * 1024) return fail('Video phải có dung lượng từ 1 byte đến tối đa 50MB.');
+      const uploaded = await uploadVideoToImageKit(env, file);
+      const now = new Date().toISOString();
+      await env.DB.prepare('UPDATE video_jobs SET output_file_url=?,output_imagekit_file_id=?,file_size_bytes=? WHERE id=? AND project_id=? AND user_id=?')
+        .bind(uploaded.url, uploaded.fileId, file.size, jobId, projectId, actor.id).run();
+      await env.DB.prepare('UPDATE video_projects SET output_file_url=?,output_imagekit_file_id=?,updated_at=? WHERE id=? AND user_id=?')
+        .bind(uploaded.url, uploaded.fileId, now, projectId, actor.id).run();
+      await audit(env, actor.id, null, 'VIDEO_OUTPUT_STORED', { projectId, jobId, fileSizeBytes: file.size });
+      return json({ stored: true, outputFileUrl: uploaded.url, fileSizeBytes: file.size });
     }
 
     // ==================== ADMIN & SUPER ADMIN ROUTES ====================

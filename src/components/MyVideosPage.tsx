@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Copy, Edit3, Film, Plus, Search, Trash2 } from 'lucide-react';
+import { Copy, Download, Edit3, Film, Plus, Search, Trash2 } from 'lucide-react';
 import { api, formatBytes, formatDate, projectStatusLabel } from '../lib/api';
 import type { VideoProject } from '../types';
 
@@ -126,6 +126,11 @@ export default function MyVideosPage({ onEditProject, onNewVideo }: Props) {
               ) : p.errorMessage ? (
                 <small className="error-meta">{p.errorMessage}</small>
               ) : null}
+              {p.outputFileUrl && p.status === 'COMPLETED' && (
+                <a className="secondary-btn" href={p.outputFileUrl} target="_blank" rel="noreferrer" download>
+                  <Download size={14} /> Tải video đã lưu
+                </a>
+              )}
               <small className="muted-copy">Cập nhật: {formatDate(p.updatedAt)}</small>
               <div className="project-card-actions">
                 <button className="primary-btn" onClick={() => onEditProject(p.id)}>

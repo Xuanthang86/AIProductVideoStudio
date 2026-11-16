@@ -175,6 +175,7 @@ export interface VideoProject {
   outputFormat?: string | null;
   outputResolution?: string | null;
   outputSizeBytes?: number | null;
+  outputFileUrl?: string | null;
   errorMessage?: string | null;
   createdAt: string;
   updatedAt: string;

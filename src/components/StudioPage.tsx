@@ -27,6 +27,7 @@ import {
   renderProjectVideo,
   type RenderResolution,
   type RenderResult,
+  type VoiceoverTrack,
 } from '../lib/videoRenderer';
 import type {
   AspectRatio,
@@ -486,8 +487,36 @@ export default function StudioPage({
       });
       activeJobId = jobRes.jobId;
 
+      const voiceovers: VoiceoverTrack[] = [];
+      if (voiceConfig.enabled) {
+        if (typeof AudioContext === 'undefined') throw new Error('Trình duyệt không hỗ trợ giải mã âm thanh để ghép giọng đọc.');
+        const audioContext = new AudioContext();
+        let sceneStartSec = 0;
+        try {
+          for (let i = 0; i < scenes.length; i++) {
+            if (controller.signal.aborted) throw new Error('RENDER_CANCELLED');
+            const narration = scenes[i].narration.trim();
+            if (narration) {
+              setRenderStage(`Đang tạo giọng đọc cho cảnh ${i + 1}/${scenes.length}...`);
+              setRenderPercent(Math.min(15, 3 + Math.round((i / Math.max(1, scenes.length)) * 12)));
+              const tts = await api<{ available: boolean; reason?: string; audioBase64?: string; mimeType?: string }>('/api/ai/tts', 'POST', { text: narration, voice: voiceConfig.voice, speed: voiceConfig.speed });
+              if (!tts.available || !tts.audioBase64) throw new Error(tts.reason || 'Kokoro TTS chưa sẵn sàng. Hãy tắt Giọng đọc hoặc cấu hình Kokoro TTS trước khi xuất video.');
+              const binary = atob(tts.audioBase64);
+              const bytes = new Uint8Array(binary.length);
+              for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+              const audioBuffer = await audioContext.decodeAudioData(bytes.buffer.slice(0));
+              voiceovers.push({ audioBuffer, startSec: sceneStartSec, volume: 1 });
+            }
+            sceneStartSec += Math.max(1, scenes[i].durationSec);
+          }
+        } finally {
+          await audioContext.close().catch(() => {});
+        }
+      }
+
       const result = await renderProjectVideo({
         scenes,
+        voiceovers,
         aspectRatio,
         resolution,
         productName: selectedProduct?.name || title,
@@ -500,6 +529,19 @@ export default function StudioPage({
         },
       });
 
+      let persistentVideoUrl = '';
+      try {
+        setRenderStage('Đang lưu video lên ImageKit để có thể tải lại sau này...');
+        const uploadForm = new FormData();
+        uploadForm.append('file', result.blob, `${activeProjectId}-${Date.now()}.${result.format}`);
+        const uploadResponse = await fetch(`/api/projects/${activeProjectId}/jobs/${activeJobId}/upload`, { method: 'POST', credentials: 'include', body: uploadForm });
+        const uploadResult = await uploadResponse.json().catch(() => ({})) as { outputFileUrl?: string; error?: string };
+        if (!uploadResponse.ok) throw new Error(uploadResult.error || 'Không thể lưu video lên ImageKit.');
+        persistentVideoUrl = uploadResult.outputFileUrl || '';
+      } catch (uploadError) {
+        console.warn('Video rendered locally but ImageKit upload failed:', uploadError);
+      }
+
       await api(`/api/projects/${activeProjectId}/jobs/${activeJobId}`, 'PATCH', {
         status: 'COMPLETED',
         progress: 100,
@@ -511,7 +553,7 @@ export default function StudioPage({
       const blobUrl = URL.createObjectURL(result.blob);
       setRenderedVideo({ url: blobUrl, result });
       setMessage(
-        `Xuất video ${result.format.toUpperCase()} (${result.width}×${result.height}, ${formatBytes(result.fileSizeBytes)}) thành công!`
+        `Xuất video ${result.format.toUpperCase()} (${result.width}×${result.height}, ${formatBytes(result.fileSizeBytes)}) thành công!${persistentVideoUrl ? ' Đã lưu trên ImageKit để tải lại.' : ' Video hiện được lưu trên thiết bị; chưa lưu được bản trực tuyến.'}`
       );
     } catch (e) {
       const isCancelled = e instanceof Error && e.message === 'RENDER_CANCELLED';
@@ -896,6 +938,7 @@ export default function StudioPage({
                       <Volume2 size={14} /> Nghe thử giọng đọc
                     </button>
                     {ttsNotice && <p className="tts-notice">{ttsNotice}</p>}
+                    <p className="tts-notice">Khi xuất video có giọng đọc, hệ thống cần máy chủ Kokoro TTS đã được cấu hình; giọng đọc trình duyệt chỉ dùng để nghe thử.</p>
                   </>
                 )}
                 {!voiceConfig.enabled && (
