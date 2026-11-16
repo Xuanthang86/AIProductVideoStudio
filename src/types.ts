@@ -122,6 +122,7 @@ export interface VideoScene {
   projectId?: string;
   productId?: string | null;
   productName?: string;
+  renderedClip?: boolean;
   sortOrder: number;
   durationSec: number;
   narration: string;

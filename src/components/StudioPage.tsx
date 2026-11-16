@@ -717,8 +717,13 @@ export default function StudioPage({
         }
       }
 
+      const approvedSceneClips = scenes.map(scene => ({
+        ...scene,
+        aiVideoUrl: scene.id ? sceneReviews[scene.id].outputFileUrl : '',
+        renderedClip: true,
+      }));
       const result = await renderProjectVideo({
-        scenes,
+        scenes: approvedSceneClips,
         voiceovers,
         aspectRatio,
         resolution,

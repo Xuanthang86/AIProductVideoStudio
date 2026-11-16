@@ -185,14 +185,16 @@ export function drawSceneFrame(
 
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.translate(width / 2 + offsetX + transSlideX, height * 0.44 + offsetY);
+  ctx.translate(width / 2 + offsetX + transSlideX, scene.renderedClip ? height / 2 : height * 0.44 + offsetY);
   ctx.rotate(rotation);
   ctx.scale(scale, scale);
 
   const stageW = width * 0.78;
   const stageH = height * 0.52;
 
-  if (image) {
+  if (scene.renderedClip && image instanceof HTMLVideoElement) {
+    ctx.drawImage(image, -width / 2, -height / 2, width, height);
+  } else if (image) {
     const mediaWidth = image instanceof HTMLVideoElement ? image.videoWidth : image.naturalWidth;
     const mediaHeight = image instanceof HTMLVideoElement ? image.videoHeight : image.naturalHeight;
     const imgRatio = mediaWidth / Math.max(1, mediaHeight);
@@ -239,7 +241,8 @@ export function drawSceneFrame(
   const padX = Math.round(width * 0.06);
   const topY = Math.round(height * 0.055);
 
-  // Top product pill
+  // Top product pill is already embedded in a previously approved scene clip.
+  if (!scene.renderedClip) {
   ctx.save();
   ctx.font = `700 ${Math.max(13, Math.round(width * 0.026))}px "Be Vietnam Pro", sans-serif`;
   const pillText = productName.slice(0, 34);
@@ -267,12 +270,13 @@ export function drawSceneFrame(
     ctx.fillText(badgeLabel, width - padX - bw + width * 0.022, topY + (pillH * 0.86) / 2);
   }
   ctx.restore();
+  }
 
   // Headline / On-screen text & Subtitles at lower third
   const bottomStart = height * 0.74;
   ctx.save();
 
-  if (scene.showOnScreenText !== false && scene.onScreenText) {
+  if (!scene.renderedClip && scene.showOnScreenText !== false && scene.onScreenText) {
     ctx.font = `800 ${Math.max(18, Math.round(width * 0.042))}px "Be Vietnam Pro", sans-serif`;
     const lines = wrapTextLines(ctx, scene.onScreenText, width - padX * 2).slice(0, 2);
     ctx.textAlign = 'center';
@@ -287,7 +291,7 @@ export function drawSceneFrame(
     }
   }
 
-  if (showSubtitles && scene.narration) {
+  if (!scene.renderedClip && showSubtitles && scene.narration) {
     const subFontSize = Math.max(13, Math.round(width * 0.027));
     ctx.font = `500 ${subFontSize}px "Be Vietnam Pro", sans-serif`;
     const subLines = wrapTextLines(ctx, scene.narration, width - padX * 2.4).slice(0, 2);
@@ -310,7 +314,7 @@ export function drawSceneFrame(
   }
 
   // Final scene CTA pill
-  if (sceneIndex === totalScenes - 1 && ctaText && t > 0.35) {
+  if (!scene.renderedClip && sceneIndex === totalScenes - 1 && ctaText && t > 0.35) {
     const ctaFontSize = Math.max(14, Math.round(width * 0.029));
     ctx.font = `700 ${ctaFontSize}px "Be Vietnam Pro", sans-serif`;
     const cw = Math.min(width - padX * 2, ctx.measureText(ctaText).width + width * 0.09);
