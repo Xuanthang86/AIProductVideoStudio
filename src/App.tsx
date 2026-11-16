@@ -627,8 +627,13 @@ export default function App() {
                       <strong>{format.name}</strong>
                       <p>{format.detail}</p>
                       <span className="format-select">
-                        {selected === format.name ? 'Đang chọn' : <>Chọn phong cách <ArrowRight size={15} /></>}
+                        {selected === format.name ? 'Đã chọn phong cách này' : <>Chọn phong cách <ArrowRight size={15} /></>}
                       </span>
+                      {selected === format.name && (
+                        <span className="format-selected-note">
+                          <CheckCircle2 size={16} /> Phong cách đã được chọn. Bạn có thể tiếp tục mở Video Studio.
+                        </span>
+                      )}
                     </button>
                   );
                 })}

@@ -3130,3 +3130,36 @@ main,
   .format-card { width: 100%; min-width: 0; box-sizing: border-box; -webkit-appearance: none; appearance: none; touch-action: manipulation; }
   .format-card > * { max-width: 100%; }
 }
+
+
+/* Make the active format selection unmistakable on touch screens */
+.format-card.is-selected {
+  border: 2px solid var(--blue);
+  background: #f1f6ff;
+  box-shadow: 0 6px 18px rgba(34, 93, 211, 0.10);
+}
+.format-selected-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 4px;
+  padding: 10px 11px;
+  border-radius: 8px;
+  background: #e8f1ff;
+  color: #174da8;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+.format-selected-note svg {
+  flex: 0 0 16px;
+  margin-top: 1px;
+}
+@media (max-width: 680px) {
+  .format-card.is-selected {
+    padding: 18px 16px;
+  }
+  .format-selected-note {
+    font-size: 13.5px;
+  }
+}

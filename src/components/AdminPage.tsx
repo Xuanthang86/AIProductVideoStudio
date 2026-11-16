@@ -62,6 +62,9 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [aiUsage, setAiUsage] = useState<Array<{ module_key: string; calls: number; tokens: number; cost: number }>>([]);
   const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [newAccount, setNewAccount] = useState({
+    fullName: '', email: '', username: '', phone: '', purpose: '', password: '', role: 'USER',
+  });
   const [products, setProducts] = useState<Array<Record<string, unknown>>>([]);
   const [projects, setProjects] = useState<Array<Record<string, unknown>>>([]);
   const [templates, setTemplates] = useState<VideoTemplate[]>([]);
@@ -149,6 +152,36 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
       await loadTab('users');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Thao tác thất bại.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createManagedUser = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const allowedRoles = isSuperAdmin ? ['ADMIN', 'EDITOR', 'USER'] : ['EDITOR', 'USER'];
+    if (!newAccount.fullName.trim() || !newAccount.email.trim()) {
+      setError('Vui lòng nhập họ tên và email.');
+      return;
+    }
+    if (newAccount.password.length < 12) {
+      setError('Mật khẩu phải có ít nhất 12 ký tự.');
+      return;
+    }
+    if (!allowedRoles.includes(newAccount.role)) {
+      setError('Bạn không có quyền tạo tài khoản với vai trò này.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await api<{ message?: string }>('/api/admin/users', 'POST', newAccount);
+      setNewAccount({ fullName: '', email: '', username: '', phone: '', purpose: '', password: '', role: 'USER' });
+      setMessage(result.message || 'Đã tạo tài khoản và kích hoạt thành công.');
+      await loadTab('users');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không thể tạo tài khoản.');
     } finally {
       setBusy(false);
     }
@@ -393,6 +426,20 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
               <div className="panel-card-head">
                 <h3>Quản lý tài khoản & phê duyệt ({users.length})</h3>
               </div>
+              <form className="admin-create-user" onSubmit={createManagedUser}>
+                <h4><Plus size={17} /> Tạo tài khoản mới</h4>
+                <p>Tạo và kích hoạt tài khoản trực tiếp. Người dùng vẫn có thể tự đăng ký và chờ Admin phê duyệt như hiện tại.</p>
+                <div className="form-grid-2">
+                  <label className="field-label">Họ và tên *<input value={newAccount.fullName} onChange={e => setNewAccount(v => ({ ...v, fullName: e.target.value }))} autoComplete="name" required /></label>
+                  <label className="field-label">Email *<input type="email" value={newAccount.email} onChange={e => setNewAccount(v => ({ ...v, email: e.target.value }))} autoComplete="email" required /></label>
+                  <label className="field-label">Tên đăng nhập<input value={newAccount.username} onChange={e => setNewAccount(v => ({ ...v, username: e.target.value }))} autoComplete="username" /></label>
+                  <label className="field-label">Số điện thoại<input type="tel" value={newAccount.phone} onChange={e => setNewAccount(v => ({ ...v, phone: e.target.value }))} autoComplete="tel" /></label>
+                  <label className="field-label">Mật khẩu *<input type="password" value={newAccount.password} onChange={e => setNewAccount(v => ({ ...v, password: e.target.value }))} autoComplete="new-password" minLength={12} maxLength={128} required /><small>Tối thiểu 12 ký tự.</small></label>
+                  <label className="field-label">Vai trò tài khoản<select value={newAccount.role} onChange={e => setNewAccount(v => ({ ...v, role: e.target.value }))}>{(isSuperAdmin ? ['ADMIN', 'EDITOR', 'USER'] : ['EDITOR', 'USER']).map(role => <option key={role} value={role}>{roleLabel[role] || role}</option>)}</select></label>
+                </div>
+                <label className="field-label">Mục đích sử dụng<input value={newAccount.purpose} onChange={e => setNewAccount(v => ({ ...v, purpose: e.target.value }))} maxLength={500} /></label>
+                <button type="submit" className="primary-btn" disabled={busy}>{busy ? 'Đang tạo tài khoản…' : 'Tạo tài khoản và kích hoạt'}</button>
+              </form>
               <div className="table-scroll">
                 <table className="data-table">
                   <thead>

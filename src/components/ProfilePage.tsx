@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, KeyRound, LogOut, ShieldCheck, User as UserIcon } from 'lucide-react';
+import { ChevronDown, KeyRound, ShieldCheck, User as UserIcon } from 'lucide-react';
 import PasswordInput from './PasswordInput';
 import { api, formatDate, roleLabel, statusLabel } from '../lib/api';
 import type { User, UserQuota, UserUsage } from '../types';
@@ -12,7 +12,7 @@ interface Props {
   onLogout?: () => Promise<void> | void;
 }
 
-export default function ProfilePage({ user, quota, usage, onUserUpdated, onLogout }: Props) {
+export default function ProfilePage({ user, quota, usage, onUserUpdated }: Props) {
   const [fullName, setFullName] = useState(user.fullName);
   const [phone, setPhone] = useState(user.phone || '');
   const [purpose, setPurpose] = useState(user.purpose || '');
@@ -89,11 +89,7 @@ export default function ProfilePage({ user, quota, usage, onUserUpdated, onLogou
           <h1>Hồ sơ, hạn mức & bảo mật</h1>
           <p>Quản lý thông tin cá nhân, kiểm tra hạn mức sử dụng và cập nhật mật khẩu đăng nhập.</p>
         </div>
-        {onLogout && (
-          <button type="button" className="secondary-btn danger-outline" onClick={onLogout}>
-            <LogOut size={16} /> Đăng xuất
-          </button>
-        )}
+
       </div>
 
       {(error || message) && <div className={error ? 'banner-alert error' : 'banner-alert'}>{error || message}</div>}
