@@ -47,7 +47,6 @@ jobs:
         run: |
           gh issue create \
             --title "Cảnh báo: trang giá/chính sách nhà cung cấp AI đã thay đổi (${{ github.run_id }})" \
-            --label "monitoring" \
             --body-file provider-monitor-report.md
 
       - name: Save latest verified baseline
