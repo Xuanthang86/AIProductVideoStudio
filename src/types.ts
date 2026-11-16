@@ -120,6 +120,8 @@ export type ProjectStatus = 'DRAFT' | 'PENDING' | 'PROCESSING' | 'COMPLETED' | '
 export interface VideoScene {
   id?: string;
   projectId?: string;
+  productId?: string | null;
+  productName?: string;
   sortOrder: number;
   durationSec: number;
   narration: string;

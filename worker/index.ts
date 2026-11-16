@@ -1614,11 +1614,12 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       for (let i = 0; i < scenes.length; i++) {
         const s = scenes[i] as Record<string, unknown>;
         await env.DB.prepare(
-          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
           .bind(
             uuid(),
             id,
+            str(s.productId) || productId,
             i,
             Math.max(2, num(s.durationSec, 5)),
             str(s.narration),
@@ -1651,11 +1652,15 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       if (!project) return fail('Không tìm thấy dự án video.', 404);
 
       if (request.method === 'GET') {
-        const scenesRows = await env.DB.prepare('SELECT * FROM video_scenes WHERE project_id=? ORDER BY sort_order ASC')
+        const scenesRows = await env.DB.prepare('SELECT vs.*, p.name AS scene_product_name FROM video_scenes vs LEFT JOIN products p ON p.id=vs.product_id WHERE vs.project_id=? ORDER BY vs.sort_order ASC')
           .bind(projectId)
           .all<Record<string, unknown>>();
         const jobsRows = await env.DB.prepare('SELECT * FROM video_jobs WHERE project_id=? ORDER BY created_at DESC LIMIT 10')
           .bind(projectId)
+          .all<Record<string, unknown>>();
+
+        const sceneReviewsRows = await env.DB.prepare('SELECT scene_id,status,output_file_url,file_size_bytes,format,resolution,scene_signature,updated_at FROM video_scene_reviews WHERE project_id=? AND user_id=?')
+          .bind(projectId, actor.id)
           .all<Record<string, unknown>>();
 
         return json({
@@ -1687,6 +1692,8 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           scenes: scenesRows.results.map(s => ({
             id: s.id,
             projectId: s.project_id,
+            productId: s.product_id || project.product_id || null,
+            productName: s.scene_product_name || null,
             sortOrder: s.sort_order,
             durationSec: s.duration_sec,
             narration: s.narration,
@@ -1703,6 +1710,16 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             musicMood: s.music_mood,
           })),
           jobs: jobsRows.results,
+          sceneReviews: sceneReviewsRows.results.map(review => ({
+            sceneId: review.scene_id,
+            status: review.status,
+            outputFileUrl: review.output_file_url,
+            fileSizeBytes: review.file_size_bytes,
+            format: review.format,
+            resolution: review.resolution,
+            sceneSignature: review.scene_signature,
+            updatedAt: review.updated_at,
+          })),
         });
       }
 
@@ -1754,11 +1771,12 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           for (let i = 0; i < data.scenes.length; i++) {
             const s = data.scenes[i] as Record<string, unknown>;
             await env.DB.prepare(
-              'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+              'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
             )
               .bind(
                 str(s.id) || uuid(),
                 projectId,
+                str(s.productId) || productId,
                 i,
                 Math.max(2, num(s.durationSec, 5)),
                 str(s.narration),
@@ -1781,6 +1799,8 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
               .run();
           }
         }
+        await env.DB.prepare('DELETE FROM video_scene_reviews WHERE project_id=? AND scene_id NOT IN (SELECT id FROM video_scenes WHERE project_id=?)')
+          .bind(projectId, projectId).run();
         return json({ message: 'Đã lưu dự án video.' });
       }
 
@@ -1788,6 +1808,49 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         await env.DB.prepare('DELETE FROM video_projects WHERE id=? AND user_id=?').bind(projectId, actor.id).run();
         return json({ message: 'Đã xóa dự án video.' });
       }
+    }
+
+    const sceneReviewUploadMatch = path.match(/^\\/api\\/projects\\/([0-9a-f-]+)\\/scenes\\/([0-9a-f-]+)\\/output$/);
+    if (sceneReviewUploadMatch && request.method === 'POST') {
+      const [, projectId, sceneId] = sceneReviewUploadMatch;
+      const ownedScene = await env.DB.prepare(
+        'SELECT vs.id FROM video_scenes vs INNER JOIN video_projects vp ON vp.id=vs.project_id WHERE vs.id=? AND vs.project_id=? AND vp.user_id=?'
+      ).bind(sceneId, projectId, actor.id).first();
+      if (!ownedScene) return fail('Không tìm thấy phân cảnh thuộc dự án của bạn.', 404);
+      const form = await request.formData();
+      const file = form.get('file');
+      const signature = str(form.get('sceneSignature'));
+      const resolution = ['480p','720p','1080p'].includes(str(form.get('resolution'))) ? str(form.get('resolution')) : '720p';
+      if (!(file instanceof File)) return fail('Không tìm thấy tệp video phân cảnh.');
+      if (!['video/mp4','video/webm'].includes(file.type)) return fail('Chỉ hỗ trợ video MP4 hoặc WebM.');
+      if (file.size <= 0 || file.size > 50 * 1024 * 1024) return fail('Video phân cảnh phải có dung lượng tối đa 50MB.');
+      if (!signature || signature.length > 8000) return fail('Thiếu thông tin phiên bản nội dung phân cảnh.');
+      const uploaded = await uploadVideoToImageKit(env, file);
+      const now = new Date().toISOString();
+      const format = file.type === 'video/mp4' ? 'mp4' : 'webm';
+      await env.DB.prepare(
+        "INSERT INTO video_scene_reviews(scene_id,project_id,user_id,status,output_file_url,output_imagekit_file_id,file_size_bytes,format,resolution,scene_signature,updated_at) VALUES(?,?,?,'PENDING',?,?,?,?,?,?,?) ON CONFLICT(scene_id) DO UPDATE SET project_id=excluded.project_id,user_id=excluded.user_id,status='PENDING',output_file_url=excluded.output_file_url,output_imagekit_file_id=excluded.output_imagekit_file_id,file_size_bytes=excluded.file_size_bytes,format=excluded.format,resolution=excluded.resolution,scene_signature=excluded.scene_signature,updated_at=excluded.updated_at"
+      ).bind(sceneId, projectId, actor.id, uploaded.url, uploaded.fileId, file.size, format, resolution, signature, now).run();
+      await audit(env, actor.id, null, 'VIDEO_SCENE_OUTPUT_STORED', { projectId, sceneId, fileSizeBytes: file.size });
+      return json({ sceneId, status: 'PENDING', outputFileUrl: uploaded.url, fileSizeBytes: file.size, format, resolution, sceneSignature: signature });
+    }
+
+    const sceneReviewMatch = path.match(/^\\/api\\/projects\\/([0-9a-f-]+)\\/scenes\\/([0-9a-f-]+)\\/review$/);
+    if (sceneReviewMatch && request.method === 'PATCH') {
+      const [, projectId, sceneId] = sceneReviewMatch;
+      const data = await body(request);
+      const status = str(data.status);
+      const signature = str(data.sceneSignature);
+      if (!['PENDING','APPROVED'].includes(status)) return fail('Trạng thái duyệt phân cảnh không hợp lệ.');
+      const review = await env.DB.prepare(
+        'SELECT r.scene_signature,r.output_file_url FROM video_scene_reviews r INNER JOIN video_projects p ON p.id=r.project_id WHERE r.scene_id=? AND r.project_id=? AND r.user_id=? AND p.user_id=?'
+      ).bind(sceneId, projectId, actor.id, actor.id).first<{ scene_signature: string; output_file_url: string }>();
+      if (!review) return fail('Phân cảnh chưa có video riêng để duyệt.', 404);
+      if (review.scene_signature !== signature) return fail('Nội dung phân cảnh đã thay đổi. Vui lòng dựng lại video trước khi duyệt.', 409);
+      if (status === 'APPROVED' && !review.output_file_url) return fail('Chưa có video phân cảnh hợp lệ để xác nhận.');
+      await env.DB.prepare('UPDATE video_scene_reviews SET status=?,updated_at=? WHERE scene_id=? AND project_id=? AND user_id=?')
+        .bind(status, new Date().toISOString(), sceneId, projectId, actor.id).run();
+      return json({ sceneId, status, sceneSignature: signature });
     }
 
     const dupMatch = path.match(/^\/api\/projects\/([0-9a-f-]+)\/duplicate$/);
@@ -1829,11 +1892,12 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .all<Record<string, unknown>>();
       for (const s of scenes.results) {
         await env.DB.prepare(
-          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
           .bind(
             uuid(),
             newId,
+            s.product_id || src.product_id,
             s.sort_order,
             s.duration_sec,
             s.narration,

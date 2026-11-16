@@ -576,7 +576,7 @@ export async function renderProjectVideo(options: {
           sceneProgress,
           sceneIndex: sceneIdx,
           totalScenes: scenes.length,
-          productName,
+          productName: currentScene.productName || productName,
           ctaText,
         });
 
