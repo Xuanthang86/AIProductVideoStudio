@@ -1810,7 +1810,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       }
     }
 
-    const sceneReviewUploadMatch = path.match(/^\\/api\\/projects\\/([0-9a-f-]+)\\/scenes\\/([0-9a-f-]+)\\/output$/);
+    const sceneReviewUploadMatch = path.match(/^\/api\/projects\/([0-9a-f-]+)\/scenes\/([0-9a-f-]+)\/output$/);
     if (sceneReviewUploadMatch && request.method === 'POST') {
       const [, projectId, sceneId] = sceneReviewUploadMatch;
       const ownedScene = await env.DB.prepare(
@@ -1835,7 +1835,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       return json({ sceneId, status: 'PENDING', outputFileUrl: uploaded.url, fileSizeBytes: file.size, format, resolution, sceneSignature: signature });
     }
 
-    const sceneReviewMatch = path.match(/^\\/api\\/projects\\/([0-9a-f-]+)\\/scenes\\/([0-9a-f-]+)\\/review$/);
+    const sceneReviewMatch = path.match(/^\/api\/projects\/([0-9a-f-]+)\/scenes\/([0-9a-f-]+)\/review$/);
     if (sceneReviewMatch && request.method === 'PATCH') {
       const [, projectId, sceneId] = sceneReviewMatch;
       const data = await body(request);
