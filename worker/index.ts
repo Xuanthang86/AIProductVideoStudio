@@ -1327,6 +1327,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
       const config = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='gemini_script'").first<AIConfigRow>();
       if (!config?.is_enabled) return fail('Mô-đun Gemini viết kịch bản đang được quản trị viên tắt.', 503);
+      if (config.is_paid) return fail('Mô-đun Gemini hiện được cấu hình là dịch vụ trả phí. Đã chặn để tránh phát sinh chi phí.', 403);
       if (!env.GEMINI_API_KEY) return fail('Chưa cấu hình Gemini API Key cho chức năng phân tích ảnh phân cảnh.', 503);
       if (!(await aiModuleWithinLimits(env, config))) return fail('Mô-đun Gemini đã đạt hạn mức ngày/tháng.', 429);
 
