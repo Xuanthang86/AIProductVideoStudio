@@ -112,7 +112,7 @@ export async function analyzeProductWithGemini(input: ProductAnalysisInput): Pro
   parts.push({ text: promptText });
 
   const response = await ai.models.generateContent({
-    model: 'gemini-4-hydrogen',
+    model: 'gemini-3.8-flash',
     contents: { parts },
     config: {
       systemInstruction:
@@ -160,7 +160,7 @@ export async function analyzeProductWithGemini(input: ProductAnalysisInput): Pro
 
   return {
     mode: 'gemini',
-    model: 'gemini-4-hydrogen',
+    model: 'gemini-3.8-flash',
     detectedCategory: parsed.detectedCategory || input.industry,
     visualSummary: parsed.visualSummary || '',
     confirmedFacts: parsed.confirmedFacts || [],
@@ -200,7 +200,7 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
   ].join('\n');
 
   const response = await ai.models.generateContent({
-    model: 'gemini-4-hydrogen',
+    model: 'gemini-3.8-flash',
     contents: promptText,
     config: {
       systemInstruction:
@@ -242,7 +242,7 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
   const rawVariants = JSON.parse((response.text ?? '[]').trim()) as ScriptVariant[];
   return {
     mode: 'gemini',
-    model: 'gemini-4-hydrogen',
+    model: 'gemini-3.8-flash',
     variants: rawVariants,
   };
 }
