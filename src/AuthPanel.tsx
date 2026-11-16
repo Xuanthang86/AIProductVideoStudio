@@ -72,6 +72,7 @@ export default function AuthPanel({
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [newAccount, setNewAccount] = useState({ fullName: '', email: '', username: '', phone: '', purpose: '', password: '', role: 'USER' });
 
   const loadUsers = async () => {
     const result = await api<{ users: User[] }>('/api/admin/users');
@@ -218,6 +219,18 @@ export default function AuthPanel({
       setResetPassValue('');
       setDeleteTarget(null);
       setMessage('Đã cập nhật tài khoản.');
+    });
+
+  const createManagedUser = () =>
+    run(async () => {
+      const roleOptions = user?.role === 'SUPER_ADMIN' ? ['ADMIN', 'EDITOR', 'USER'] : ['EDITOR', 'USER'];
+      if (!newAccount.fullName.trim() || !newAccount.email.trim()) throw new Error('Vui lòng nhập họ tên và email.');
+      if (newAccount.password.length < 12) throw new Error('Mật khẩu phải có ít nhất 12 ký tự.');
+      if (!roleOptions.includes(newAccount.role)) throw new Error('Bạn không có quyền tạo tài khoản với vai trò này.');
+      const result = await api<{ message: string }>('/api/admin/users', 'POST', newAccount);
+      await loadUsers();
+      setNewAccount({ fullName: '', email: '', username: '', phone: '', purpose: '', password: '', role: 'USER' });
+      setMessage(result.message || 'Đã tạo tài khoản và kích hoạt thành công.');
     });
 
   const canManage = (target: User) =>
@@ -573,6 +586,20 @@ export default function AuthPanel({
               <div className="auth-section-title">
                 <Users size={17} /> Quản lý tài khoản nhanh <span>{users.length}</span>
               </div>
+              <form className="admin-create-user" onSubmit={e => { e.preventDefault(); createManagedUser(); }}>
+                <h4>Tạo tài khoản trực tiếp</h4>
+                <p>Tài khoản được tạo tại đây sẽ được kích hoạt ngay. Người dùng vẫn có thể đăng ký riêng và chờ quản trị viên phê duyệt.</p>
+                <div className="form-grid-2">
+                  <label className="field-label">Họ và tên *<input value={newAccount.fullName} onChange={e => setNewAccount(v => ({ ...v, fullName: e.target.value }))} autoComplete="name" required /></label>
+                  <label className="field-label">Email *<input type="email" value={newAccount.email} onChange={e => setNewAccount(v => ({ ...v, email: e.target.value }))} autoComplete="email" required /></label>
+                  <label className="field-label">Tên đăng nhập<input value={newAccount.username} onChange={e => setNewAccount(v => ({ ...v, username: e.target.value }))} autoComplete="username" /></label>
+                  <label className="field-label">Số điện thoại<input type="tel" value={newAccount.phone} onChange={e => setNewAccount(v => ({ ...v, phone: e.target.value }))} autoComplete="tel" /></label>
+                  <label className="field-label">Mật khẩu *<input type="password" value={newAccount.password} onChange={e => setNewAccount(v => ({ ...v, password: e.target.value }))} autoComplete="new-password" minLength={12} maxLength={128} required /><small>Tối thiểu 12 ký tự.</small></label>
+                  <label className="field-label">Vai trò tài khoản<select value={newAccount.role} onChange={e => setNewAccount(v => ({ ...v, role: e.target.value }))}>{(user.role === 'SUPER_ADMIN' ? ['ADMIN', 'EDITOR', 'USER'] : ['EDITOR', 'USER']).map(role => <option key={role} value={role}>{roleLabel[role] || role}</option>)}</select></label>
+                </div>
+                <label className="field-label">Mục đích sử dụng<input value={newAccount.purpose} onChange={e => setNewAccount(v => ({ ...v, purpose: e.target.value }))} maxLength={500} /></label>
+                <button type="submit" className="auth-secondary" disabled={busy}>{busy ? 'Đang tạo tài khoản…' : 'Tạo tài khoản và kích hoạt'}</button>
+              </form>
               {users.map(item => (
                 <div className="admin-user-row" key={item.id}>
                   <div className="admin-user-info">

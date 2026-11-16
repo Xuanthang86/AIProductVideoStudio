@@ -475,6 +475,9 @@ export default function App() {
           )}
         </div>
       </header>
+      {mobileMenu && (
+        <button type="button" className="mobile-menu-backdrop" aria-label="Đóng menu điều hướng" onClick={() => setMobileMenu(false)} />
+      )}
 
       <main className="main-container">
         {route === '/' && (
@@ -629,6 +632,10 @@ export default function App() {
                     </button>
                   );
                 })}
+              </div>
+              <div className="format-selection-summary" aria-live="polite" aria-atomic="true">
+                <strong>Phong cách đang chọn: {selected}</strong>
+                <p>{landingFormats.find(format => format.name === selected)?.detail}</p>
               </div>
             </section>
 

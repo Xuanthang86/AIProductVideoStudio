@@ -1763,6 +1763,39 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         });
       }
 
+      if (path === '/api/admin/users' && request.method === 'POST') {
+        const data = await body(request);
+        const email = str(data.email).toLowerCase();
+        const username = str(data.username).toLowerCase();
+        const fullName = str(data.fullName);
+        const phone = str(data.phone);
+        const purpose = str(data.purpose);
+        const password = str(data.password);
+        const role = str(data.role || 'USER');
+        const allowedRoles = actor.role === 'SUPER_ADMIN' ? ['ADMIN', 'EDITOR', 'USER'] : ['EDITOR', 'USER'];
+        if (!allowedRoles.includes(role) || roleRank(role) >= roleRank(actor.role)) return fail('Bạn không có quyền tạo tài khoản với vai trò này.', 403);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 190) return fail('Email không hợp lệ.');
+        if (username && !/^[a-z0-9._-]{3,40}$/.test(username)) return fail('Tên đăng nhập chỉ gồm chữ thường, số, dấu chấm, gạch ngang hoặc gạch dưới (3-40 ký tự).');
+        if (fullName.length < 2 || fullName.length > 120) return fail('Họ và tên phải từ 2 đến 120 ký tự.');
+        if (password.length < 12 || password.length > 128) return fail('Mật khẩu phải có từ 12 đến 128 ký tự.');
+        if (phone.length > 30 || purpose.length > 500) return fail('Số điện thoại hoặc mục đích sử dụng vượt quá giới hạn.');
+        const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(email).first();
+        if (existingEmail) return fail('Email này đã được sử dụng.', 409);
+        if (username) {
+          const existingUsername = await env.DB.prepare('SELECT id FROM users WHERE username=?').bind(username).first();
+          if (existingUsername) return fail('Tên đăng nhập này đã được sử dụng.', 409);
+        }
+        const id = uuid();
+        const salt = hex(bytes(16));
+        const now = new Date().toISOString();
+        await env.DB.prepare('INSERT INTO users(id,email,username,full_name,phone,purpose,password_hash,password_salt,role,status,approved_at,approved_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+          .bind(id, email, username || null, fullName, phone || null, purpose || null, await passwordHash(password, salt), salt, role, 'APPROVED', now, actor.id)
+          .run();
+        await getOrCreateQuota(env, id);
+        await audit(env, actor.id, id, 'ADMIN_USER_CREATED', { email, username: username || null, role });
+        return json({ message: 'Đã tạo tài khoản và kích hoạt thành công.', status: 'APPROVED', role }, 201);
+      }
+
       if (path === '/api/admin/users' && request.method === 'GET') {
         const result = await env.DB.prepare(
           `SELECT u.id,u.email,u.username,u.full_name,u.phone,u.purpose,u.role,u.status,u.created_at,u.approved_at,u.last_login_at,
@@ -1966,7 +1999,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
       if (path === '/api/admin/topics' && request.method === 'POST') {
         const data = await body(request);
-        const name = str(data.name).replace(/\\s+/g, ' ');
+        const name = str(data.name).replace(/\s+/g, ' ');
         if (!name || name.length > 80) return fail('Tên chủ đề phải từ 1 đến 80 ký tự.');
         const exists = await env.DB.prepare('SELECT id FROM video_topics WHERE name=? COLLATE NOCASE').bind(name).first();
         if (exists) return fail('Chủ đề này đã tồn tại.', 409);

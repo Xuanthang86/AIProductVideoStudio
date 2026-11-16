@@ -3098,3 +3098,35 @@ main,
 .product-stage.is-paused + .preview-controls .timeline i {
   animation-play-state: paused !important;
 }
+
+
+/* Mobile navigation, compact account control and direct account creation */
+.mobile-menu-backdrop { display: none; }
+.format-selection-summary { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
+.format-selection-summary strong { display: block; color: var(--navy); font-size: 14px; }
+.format-selection-summary p { margin: 5px 0 0; color: var(--ink-soft); font-size: 13.5px; line-height: 1.5; }
+.admin-create-user { display: grid; gap: 12px; margin: 14px 0 18px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #f8faff; }
+.admin-create-user h4 { margin: 0; color: var(--navy); font-size: 15px; }
+.admin-create-user > p { margin: -6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.admin-create-user .field-label { min-width: 0; }
+.admin-create-user input, .admin-create-user select { width: 100%; min-width: 0; box-sizing: border-box; }
+.admin-create-user small { color: var(--muted); font-size: 12px; }
+@media (max-width: 900px) {
+  .mobile-menu-backdrop { display: block; position: fixed; inset: 66px 0 0; z-index: 29; border: 0; border-radius: 0; padding: 0; background: rgba(16, 29, 54, 0.18); }
+}
+@media (max-width: 680px) {
+  .topbar { min-width: 0; }
+  .brand { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  .brand-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+  .top-actions { min-width: 0; max-width: 138px; }
+  .account-menu-wrap { min-width: 0; max-width: 100%; }
+  .account-trigger { min-width: 0; max-width: 138px; gap: 6px; padding: 4px 7px 4px 5px; overflow: hidden; }
+  .account-trigger-avatar { width: 25px; height: 25px; flex: 0 0 25px; }
+  .account-trigger-meta { min-width: 0; max-width: 72px; overflow: hidden; }
+  .account-trigger-meta strong { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .account-trigger > svg { width: 14px; height: 14px; flex: 0 0 14px; }
+  .admin-create-user { padding: 12px; }
+  .admin-create-user .form-grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .format-card { width: 100%; min-width: 0; box-sizing: border-box; -webkit-appearance: none; appearance: none; touch-action: manipulation; }
+  .format-card > * { max-width: 100%; }
+}
