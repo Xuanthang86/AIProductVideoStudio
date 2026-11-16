@@ -81,6 +81,8 @@ export default function App() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [selected, setSelected] = useState('Video quảng cáo');
   const [heroPreviewPlaying, setHeroPreviewPlaying] = useState(true);
+  const [heroPreviewElapsed, setHeroPreviewElapsed] = useState(0);
+  const heroPreviewElapsedRef = useRef(0);
   const [authOpen, setAuthOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register' | 'account'>('login');
 
@@ -99,6 +101,21 @@ export default function App() {
   const [studioProjectId, setStudioProjectId] = useState<string>('');
 
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!heroPreviewPlaying) return;
+
+    const startedAt = Date.now() - heroPreviewElapsedRef.current * 1000;
+    const timer = window.setInterval(() => {
+      const elapsed = ((Date.now() - startedAt) / 1000) % 15;
+      heroPreviewElapsedRef.current = elapsed;
+      setHeroPreviewElapsed(elapsed);
+    }, 100);
+
+    return () => window.clearInterval(timer);
+  }, [heroPreviewPlaying]);
+
+  const previewElapsedLabel = `00:${String(Math.floor(heroPreviewElapsed)).padStart(2, '0')}`;
 
   const navigate = (path: string) => {
     const normalized = normalizePath(path);
@@ -546,7 +563,7 @@ export default function App() {
                     <div className="timeline">
                       <i />
                     </div>
-                    <span>00:15</span>
+                    <span aria-live="off">{previewElapsedLabel} / 00:15</span>
                   </div>
                 </div>
               </div>
@@ -594,7 +611,8 @@ export default function App() {
                     <button
                       type="button"
                       key={format.name}
-                      className="format-card"
+                      className={`format-card ${selected === format.name ? 'is-selected' : ''}`}
+                      aria-pressed={selected === format.name}
                       onClick={() => setSelected(format.name)}
                     >
                       <div className="format-card-top">
@@ -606,7 +624,7 @@ export default function App() {
                       <strong>{format.name}</strong>
                       <p>{format.detail}</p>
                       <span className="format-select">
-                        {selected === format.name ? 'Đang chọn' : 'Chọn phong cách'} <ArrowRight size={15} />
+                        {selected === format.name ? 'Đang chọn' : <>Chọn phong cách <ArrowRight size={15} /></>}
                       </span>
                     </button>
                   );
