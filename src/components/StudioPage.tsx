@@ -556,8 +556,7 @@ export default function StudioPage({
 
   const getSceneSignature = (scene: VideoScene) => JSON.stringify({
     productId: scene.productId || productId || '',
-    imageId: scene.imageId || '',
-    imageUrl: scene.imageUrl || '',
+    imageReference: scene.imageId || (scene.imageUrl || '').slice(0, 500),
     narration: scene.narration || '',
     onScreenText: scene.onScreenText || '',
     showOnScreenText: scene.showOnScreenText !== false,
