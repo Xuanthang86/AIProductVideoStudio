@@ -1335,7 +1335,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           interaction?: { output_audio?: { data?: string; mime_type?: string }; outputAudio?: { data?: string; mimeType?: string } };
           output?: Array<{ type?: string; data?: string; mime_type?: string; mimeType?: string }>;
         };
-        const audioPart = payload.output_audio || payload.outputAudio || payload.interaction?.output_audio || payload.interaction?.outputAudio;
+        const audioPart = (payload.output_audio || payload.outputAudio || payload.interaction?.output_audio || payload.interaction?.outputAudio) as { data?: string; mime_type?: string; mimeType?: string } | undefined;
         const outputAudio = audioPart?.data
           ? { data: audioPart.data, mimeType: audioPart.mime_type || audioPart.mimeType || 'audio/wav' }
           : payload.output?.find(part => part.type === 'audio' && part.data)
