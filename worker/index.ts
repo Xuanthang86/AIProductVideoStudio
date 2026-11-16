@@ -1287,6 +1287,102 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       return json(result);
     }
 
+    if (path === '/api/ai/scene-assist' && request.method === 'POST') {
+      const data = await body(request);
+      const productId = str(data.productId);
+      const imageId = str(data.imageId);
+      const instruction = str(data.instruction);
+      const scene = data.scene && typeof data.scene === 'object' ? data.scene as Record<string, unknown> : {};
+      if (!productId || !imageId) return fail('Thiếu sản phẩm hoặc ảnh phân cảnh.');
+      if (instruction.length > 1200) return fail('Yêu cầu chỉnh sửa tối đa 1.200 ký tự.');
+
+      const product = await env.DB.prepare('SELECT name,brand,industry,description,highlights_json FROM products WHERE id=? AND user_id=?')
+        .bind(productId, actor.id).first<Record<string, unknown>>();
+      if (!product) return fail('Không tìm thấy sản phẩm.', 404);
+      const image = await env.DB.prepare('SELECT mime_type,data_base64,image_url FROM product_images WHERE id=? AND product_id=? AND user_id=?')
+        .bind(imageId, productId, actor.id).first<{ mime_type: string; data_base64: string | null; image_url: string }>();
+      if (!image) return fail('Không tìm thấy ảnh thuộc sản phẩm này.', 404);
+
+      const mimeType = String(image.mime_type || '').toLowerCase();
+      if (!['image/jpeg','image/jpg','image/png','image/webp'].includes(mimeType)) return fail('Định dạng ảnh phân cảnh không được hỗ trợ.');
+      let imageBase64 = image.data_base64 || '';
+      if (!imageBase64 && image.image_url) {
+        const imageUrl = new URL(image.image_url, request.url);
+        const allowedHost = env.IMAGEKIT_URL_ENDPOINT ? new URL(env.IMAGEKIT_URL_ENDPOINT).hostname : '';
+        if (!allowedHost || imageUrl.hostname !== allowedHost || imageUrl.protocol !== 'https:') {
+          return fail('Không thể xác minh nguồn lưu trữ ảnh để phân tích an toàn.', 400);
+        }
+        const imageResponse = await fetch(imageUrl.toString());
+        if (!imageResponse.ok) return fail('Không thể tải ảnh phân cảnh từ kho lưu trữ.', 502);
+        const imageBuffer = await imageResponse.arrayBuffer();
+        if (imageBuffer.byteLength > 5 * 1024 * 1024) return fail('Ảnh phân cảnh vượt quá giới hạn 5MB.');
+        const bytes = new Uint8Array(imageBuffer);
+        let binary = '';
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        imageBase64 = btoa(binary);
+      }
+      if (!imageBase64) return fail('Ảnh phân cảnh chưa có dữ liệu để phân tích.');
+
+      const config = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='gemini_script'").first<AIConfigRow>();
+      if (!config?.is_enabled) return fail('Mô-đun Gemini viết kịch bản đang được quản trị viên tắt.', 503);
+      if (!env.GEMINI_API_KEY) return fail('Chưa cấu hình Gemini API Key cho chức năng phân tích ảnh phân cảnh.', 503);
+      if (!(await aiModuleWithinLimits(env, config))) return fail('Mô-đun Gemini đã đạt hạn mức ngày/tháng.', 429);
+
+      const prompt = [
+        'Bạn là đạo diễn nội dung video quảng cáo sản phẩm. Phân tích trực tiếp hình ảnh đính kèm và tạo hoặc chỉnh sửa đúng một phân cảnh.',
+        'Chỉ mô tả những gì nhìn thấy trong ảnh; không tự suy diễn công dụng, thông số, chất liệu hoặc chứng nhận không thể xác minh.',
+        `Sản phẩm: ${String(product.name)}; thương hiệu: ${String(product.brand || 'Chưa cung cấp')}; ngành hàng: ${String(product.industry)}.`,
+        `Mô tả đã xác nhận: ${String(product.description || 'Chưa cung cấp')}.`,
+        `Điểm nổi bật do người dùng cung cấp: ${safeJsonParse<string[]>(String(product.highlights_json || '[]'), []).join('; ')}.`,
+        `Nội dung cảnh hiện tại: ${JSON.stringify({ narration: str(scene.narration), onScreenText: str(scene.onScreenText), visualPrompt: str(scene.visualPrompt), durationSec: num(scene.durationSec, 5) })}.`,
+        instruction ? `Yêu cầu chỉnh sửa của người dùng: ${instruction}` : 'Hãy phân tích ảnh và đề xuất lời thoại, chữ ngắn trên màn hình và hướng hình ảnh phù hợp với ảnh.',
+        `Ngôn ngữ đầu ra: ${str(data.language) === 'en' ? 'English' : 'Tiếng Việt'}.`,
+        'Trả về JSON hợp lệ gồm narration, onScreenText, visualPrompt, motionType, transitionType, lightingEffect.',
+        'motionType chỉ được là zoom-in, zoom-out, pan-left, pan-right, parallax, rotate-showcase.',
+        'transitionType chỉ được là fade, slide, zoom-cut.',
+        'lightingEffect chỉ được là studio-glow, warm-gold, neon-rim, clean.',
+        'Lời thoại tự nhiên, phù hợp thời lượng cảnh; onScreenText ngắn gọn. Không thêm giải thích ngoài JSON.',
+      ].join('\n');
+
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model_name)}:generateContent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: imageBase64 } }, { text: prompt }] }],
+            generationConfig: { responseMimeType: 'application/json', temperature: 0.55 },
+          }),
+        });
+        if (!response.ok) throw new Error(`Gemini API HTTP ${response.status}: ${(await response.text()).slice(0, 240)}`);
+        const payload = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+        const responseText = payload.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim() || '';
+        const parsed = JSON.parse(responseText) as Record<string, unknown>;
+        const motions = ['zoom-in','zoom-out','pan-left','pan-right','parallax','rotate-showcase'];
+        const transitions = ['fade','slide','zoom-cut'];
+        const lights = ['studio-glow','warm-gold','neon-rim','clean'];
+        const resultScene = {
+          narration: str(parsed.narration) || str(scene.narration),
+          onScreenText: str(parsed.onScreenText) || str(scene.onScreenText),
+          visualPrompt: str(parsed.visualPrompt) || str(scene.visualPrompt),
+          motionType: motions.includes(str(parsed.motionType)) ? str(parsed.motionType) : str(scene.motionType) || 'zoom-in',
+          transitionType: transitions.includes(str(parsed.transitionType)) ? str(parsed.transitionType) : str(scene.transitionType) || 'fade',
+          lightingEffect: lights.includes(str(parsed.lightingEffect)) ? str(parsed.lightingEffect) : str(scene.lightingEffect) || 'studio-glow',
+        };
+        await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', config.model_name, 'scene-assist', 'SUCCESS', imageBase64.length, 0);
+        await env.DB.prepare("UPDATE ai_configs SET last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
+          .bind(new Date().toISOString()).run();
+        return json({ scene: resultScene, model: config.model_name, reviewedRequired: true });
+      } catch (sceneError) {
+        const message = sceneError instanceof Error ? sceneError.message : 'Gemini scene analysis failed';
+        await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', config.model_name, 'scene-assist', 'ERROR', 0, 0, message);
+        await env.DB.prepare("UPDATE ai_configs SET last_status='ERROR',last_error=?,updated_at=? WHERE module_key='gemini_script'")
+          .bind(message.slice(0, 300), new Date().toISOString()).run();
+        return fail(`Không thể phân tích/chỉnh sửa phân cảnh: ${message.slice(0, 220)}`, 502);
+      }
+    }
+
     if (path === '/api/ai/tts' && request.method === 'POST') {
       const quota = await getOrCreateQuota(env, actor.id);
       if (!quota.can_use_voice) return fail('Tài khoản của bạn chưa được cấp quyền sử dụng AI Voice.', 403);

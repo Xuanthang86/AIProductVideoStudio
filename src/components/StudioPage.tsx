@@ -130,6 +130,8 @@ export default function StudioPage({
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const [previewTime, setPreviewTime] = useState(0);
   const [uploadingSceneIndex, setUploadingSceneIndex] = useState<number | null>(null);
+  const [sceneAssistBusyIndex, setSceneAssistBusyIndex] = useState<number | null>(null);
+  const [sceneInstructions, setSceneInstructions] = useState<Record<number, string>>({});
 
   // MP4 Render state
   const [resolution, setResolution] = useState<RenderResolution>('720p');
@@ -395,6 +397,43 @@ export default function StudioPage({
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : 'Không thể tải ảnh phân cảnh.');
     } finally { setUploadingSceneIndex(null); }
+  };
+
+  const assistScene = async (index: number) => {
+    const scene = scenes[index];
+    if (!productId || !scene?.imageId) {
+      setError('Vui lòng chọn sản phẩm và tải/chọn ảnh cho phân cảnh trước khi phân tích.');
+      return;
+    }
+    setSceneAssistBusyIndex(index);
+    setError('');
+    setMessage('');
+    try {
+      const result = await api<{
+        scene: Pick<VideoScene, 'narration' | 'onScreenText' | 'visualPrompt' | 'motionType' | 'transitionType' | 'lightingEffect'>;
+        model: string;
+      }>('/api/ai/scene-assist', 'POST', {
+        productId,
+        imageId: scene.imageId,
+        scene: {
+          narration: scene.narration,
+          onScreenText: scene.onScreenText,
+          visualPrompt: scene.visualPrompt,
+          durationSec: scene.durationSec,
+          motionType: scene.motionType,
+          transitionType: scene.transitionType,
+          lightingEffect: scene.lightingEffect,
+        },
+        instruction: sceneInstructions[index] || '',
+        language,
+      });
+      updateScene(index, result.scene);
+      setMessage(`Đã ${sceneInstructions[index]?.trim() ? 'chỉnh sửa' : 'phân tích'} nội dung phân cảnh #${index + 1} bằng ${result.model}. Vui lòng kiểm duyệt trước khi xuất video.`);
+    } catch (assistError) {
+      setError(assistError instanceof Error ? assistError.message : 'Không thể phân tích/chỉnh sửa phân cảnh.');
+    } finally {
+      setSceneAssistBusyIndex(null);
+    }
   };
 
   const moveScene = (index: number, dir: -1 | 1) => {
@@ -830,6 +869,15 @@ export default function StudioPage({
                     </div>
 
                     <div className="form-grid-2">
+                      <label className="field-label">
+                        Yêu cầu AI chỉnh sửa phân cảnh
+                        <textarea rows={2} value={sceneInstructions[idx] || ''} onChange={e => setSceneInstructions(prev => ({ ...prev, [idx]: e.target.value }))} placeholder="Ví dụ: tập trung cận cảnh chất liệu, lời thoại ngắn gọn và sang trọng..." />
+                        <button type="button" className="secondary-btn" disabled={sceneAssistBusyIndex !== null || !scene.imageId}
+                          onClick={() => void assistScene(idx)}>
+                          <Sparkles size={14} /> {sceneAssistBusyIndex === idx ? 'Đang phân tích ảnh...' : (sceneInstructions[idx]?.trim() ? 'Chỉnh sửa theo yêu cầu' : 'AI phân tích ảnh & viết nội dung')}
+                        </button>
+                        <small className="muted-copy">AI sử dụng ảnh của phân cảnh và thông tin sản phẩm; bạn cần kiểm duyệt kết quả trước khi dựng video.</small>
+                      </label>
                       <label className="field-label">
                         Chữ hiển thị trên màn hình
                         <input value={scene.onScreenText} onChange={e => updateScene(idx, { onScreenText: e.target.value })} />
