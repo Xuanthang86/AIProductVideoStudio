@@ -12,6 +12,7 @@ import {
   WandSparkles,
 } from 'lucide-react';
 import { api, formatBytes, readImageFile } from '../lib/api';
+import ConfirmDialog from './ConfirmDialog';
 import type { Industry, Product, UserQuota } from '../types';
 
 interface Props {
@@ -28,6 +29,7 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<{ kind: 'product' | 'image'; product: Product; imageId?: string } | null>(null);
 
   // Form state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -381,7 +383,7 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
                     <button className="secondary-btn" onClick={() => startEdit(selected)}>
                       Sửa thông tin
                     </button>
-                    <button className="secondary-btn danger-outline" onClick={() => deleteProduct(selected.id)}>
+                    <button className="secondary-btn danger-outline" onClick={() => setPendingDelete({ kind: 'product', product: selected })}>
                       <Trash2 size={14} /> Xóa
                     </button>
                     <button className="primary-btn" onClick={() => onStartVideo(selected.id)}>
@@ -462,7 +464,7 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
                           >
                             <Star size={14} />
                           </button>
-                          <button title="Xóa ảnh" disabled={busy} onClick={() => deleteImage(selected, im.id)}>
+                          <button title="Xóa ảnh" disabled={busy} onClick={() => setPendingDelete({ kind: 'image', product: selected, imageId: im.id })}>
                             <Trash2 size={14} />
                           </button>
                         </div>
@@ -530,6 +532,23 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
           )}
         </div>
       </div>
+      {pendingDelete && (
+        <ConfirmDialog
+          title={pendingDelete.kind === 'product' ? 'Xóa sản phẩm?' : 'Xóa hình ảnh?'}
+          message={pendingDelete.kind === 'product'
+            ? `Bạn có chắc chắn muốn xóa sản phẩm “${pendingDelete.product.name}” và các hình ảnh liên quan không?`
+            : `Bạn có chắc chắn muốn xóa hình ảnh này khỏi sản phẩm “${pendingDelete.product.name}” không?`}
+          confirmLabel={pendingDelete.kind === 'product' ? 'Xóa sản phẩm' : 'Xóa hình ảnh'}
+          busy={busy}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={async () => {
+            const target = pendingDelete;
+            setPendingDelete(null);
+            if (target.kind === 'product') await deleteProduct(target.product.id);
+            else if (target.imageId) await deleteImage(target.product, target.imageId);
+          }}
+        />
+      )}
     </div>
   );
 }

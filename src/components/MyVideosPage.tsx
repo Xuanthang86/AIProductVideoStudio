@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Copy, Download, Edit3, Film, Plus, Search, Trash2 } from 'lucide-react';
+import ConfirmDialog from './ConfirmDialog';
 import { api, formatBytes, formatDate, projectStatusLabel } from '../lib/api';
 import type { VideoProject } from '../types';
 
@@ -15,6 +16,7 @@ export default function MyVideosPage({ onEditProject, onNewVideo }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<VideoProject | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -139,13 +141,21 @@ export default function MyVideosPage({ onEditProject, onNewVideo }: Props) {
                 <button className="secondary-btn" title="Nhân bản" onClick={() => duplicate(p.id)}>
                   <Copy size={14} />
                 </button>
-                <button className="secondary-btn danger-outline" title="Xóa" onClick={() => remove(p.id)}>
+                <button className="secondary-btn danger-outline" title="Xóa" onClick={() => setDeleteTarget(p)}>
                   <Trash2 size={14} />
                 </button>
               </div>
             </article>
           ))}
         </div>
+      )}
+      {deleteTarget && (
+        <ConfirmDialog title="Xóa dự án video?"
+          message={`Bạn có chắc chắn muốn xóa dự án “${deleteTarget.title}” không? Các phân cảnh và bản duyệt liên quan cũng sẽ bị xóa.`}
+          confirmLabel="Xóa dự án"
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => { const id = deleteTarget.id; setDeleteTarget(null); void remove(id); }}
+        />
       )}
     </div>
   );

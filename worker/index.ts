@@ -508,6 +508,81 @@ function buildStructuredFreeScripts(input: {
   };
 }
 
+async function generateScriptsWithGeminiApi(input: {
+  productName: string; brand: string; industry: string; description: string; highlights: string[];
+  videoType: string; targetAudience: string; style: string; durationSec: number; language: string;
+}, apiKey: string) {
+  const sceneCount = input.durationSec <= 15 ? 3 : input.durationSec <= 30 ? 5 : input.durationSec <= 45 ? 6 : input.durationSec <= 60 ? 7 : 9;
+  const prompt = [
+    `Tạo 2 phương án kịch bản video sản phẩm bằng ${input.language === 'en' ? 'Tiếng Anh' : 'Tiếng Việt'}, tổng thời lượng mỗi phương án đúng ${input.durationSec} giây, mỗi phương án gồm khoảng ${sceneCount} phân cảnh.`,
+    `Loại video: ${input.videoType}`, `Ngành hàng: ${input.industry}`, `Tên sản phẩm: ${input.productName}`,
+    `Thương hiệu: ${input.brand || 'Chưa cung cấp'}`, `Mô tả sản phẩm: ${input.description || 'Chưa cung cấp'}`,
+    `Điểm nổi bật do người dùng cung cấp: ${input.highlights.join('; ') || 'Chưa cung cấp'}`,
+    `Đối tượng khách hàng: ${input.targetAudience || 'Khách hàng quan tâm sản phẩm'}`, `Phong cách: ${input.style}`,
+    'Không tự bịa thông số, chứng nhận, công dụng hoặc cam kết không có trong dữ liệu. Nội dung ngắn gọn, tự nhiên, có mở đầu thu hút, trình bày lợi ích và kết thúc bằng CTA.',
+    'Tổng thời lượng các cảnh phải bằng chính xác thời lượng mục tiêu. narration là lời thoại, onScreenText là chữ ngắn hiển thị trên màn hình.',
+    'motionType chỉ chọn: zoom-in, zoom-out, pan-left, pan-right, parallax, rotate-showcase.',
+    'transitionType chỉ chọn: fade, slide, zoom-cut.', 'lightingEffect chỉ chọn: studio-glow, warm-gold, neon-rim, clean.',
+    'Chỉ trả về JSON đúng cấu trúc được yêu cầu, không thêm markdown.',
+  ].join('\n');
+  const responseSchema = {
+    type: 'ARRAY',
+    items: { type: 'OBJECT', properties: {
+      variantName: { type: 'STRING' }, hookSummary: { type: 'STRING' }, ctaText: { type: 'STRING' },
+      scenes: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
+        sortOrder: { type: 'INTEGER' }, durationSec: { type: 'NUMBER' }, narration: { type: 'STRING' },
+        onScreenText: { type: 'STRING' }, motionType: { type: 'STRING' }, transitionType: { type: 'STRING' },
+        lightingEffect: { type: 'STRING' }, visualPrompt: { type: 'STRING' }, musicMood: { type: 'STRING' },
+      }, required: ['sortOrder','durationSec','narration','onScreenText','motionType','transitionType','lightingEffect','visualPrompt','musicMood'] } },
+    }, required: ['variantName','hookSummary','ctaText','scenes'] },
+  };
+  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: 'Bạn là biên kịch video quảng cáo sản phẩm chuyên nghiệp. Viết kịch bản trung thực, súc tích, có tính thương mại nhưng không phóng đại hoặc bịa đặt dữ kiện.' }] },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: 'application/json', responseSchema, temperature: 0.7 },
+    }),
+    signal: AbortSignal.timeout(45000),
+  });
+  const payload = await response.json() as {
+    error?: { message?: string };
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  if (!response.ok) throw new Error(payload.error?.message || `Gemini API trả về HTTP ${response.status}.`);
+  const responseText = payload.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim();
+  if (!responseText) throw new Error('Gemini không trả về nội dung kịch bản.');
+  const parsed = JSON.parse(responseText) as Array<{ variantName?: string; hookSummary?: string; ctaText?: string; scenes?: Array<Record<string, unknown>> }>;
+  if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Cấu trúc kịch bản Gemini trả về không hợp lệ.');
+  const allowedMotion = ['zoom-in','zoom-out','pan-left','pan-right','parallax','rotate-showcase'];
+  const allowedTransition = ['fade','slide','zoom-cut'];
+  const allowedLighting = ['studio-glow','warm-gold','neon-rim','clean'];
+  const variants = parsed.slice(0,2).map((variant, variantIndex) => {
+    if (!Array.isArray(variant.scenes) || variant.scenes.length === 0) throw new Error(`Phương án ${variantIndex + 1} không có phân cảnh.`);
+    const sourceScenes = variant.scenes.slice(0,12);
+    const weights = sourceScenes.map(scene => { const value=Number(scene.durationSec); return Number.isFinite(value)&&value>0?value:1; });
+    const weightTotal = weights.reduce((sum,value)=>sum+value,0);
+    let allocated=0;
+    const scenes = sourceScenes.map((scene,index) => {
+      const durationSec = index===sourceScenes.length-1
+        ? Number((input.durationSec-allocated).toFixed(1))
+        : Number((input.durationSec*weights[index]/weightTotal).toFixed(1));
+      allocated += durationSec;
+      const motion=String(scene.motionType||''), transition=String(scene.transitionType||''), lighting=String(scene.lightingEffect||'');
+      return {
+        sortOrder:index, durationSec, narration:String(scene.narration||''), onScreenText:String(scene.onScreenText||''),
+        motionType:allowedMotion.includes(motion)?motion:'zoom-in',
+        transitionType:allowedTransition.includes(transition)?transition:'fade',
+        lightingEffect:allowedLighting.includes(lighting)?lighting:'studio-glow',
+        visualPrompt:String(scene.visualPrompt||''), musicMood:String(scene.musicMood||'upbeat-modern'),
+      };
+    });
+    return { variantName:String(variant.variantName||`Phương án ${variantIndex+1}`), hookSummary:String(variant.hookSummary||''), ctaText:String(variant.ctaText||'Khám phá ngay'), scenes };
+  });
+  return { mode:'gemini' as const, model:'gemini-3.8-flash', variants };
+}
+
 async function uploadToImageKit(
   env: Env,
   fileName: string,
@@ -1264,26 +1339,34 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       };
 
       let result: unknown;
-      if (modCfg?.is_enabled && env.GEMINI_API_KEY && env.AI_CALLER?.generateScripts && await aiModuleWithinLimits(env, modCfg)) {
+      let useGemini = false;
+      if (modCfg?.is_enabled && env.GEMINI_API_KEY) {
+        try { useGemini = await aiModuleWithinLimits(env, modCfg); }
+        catch (limitError) { console.warn('Gemini usage-limit check unavailable; using safe free fallback:', limitError); }
+      }
+      if (useGemini && env.GEMINI_API_KEY) {
         try {
-          result = await env.AI_CALLER.generateScripts(inputPayload);
-          await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', modCfg.model_name, 'generate-script', 'SUCCESS', 900, 0);
+          result = env.AI_CALLER?.generateScripts
+            ? await env.AI_CALLER.generateScripts(inputPayload)
+            : await generateScriptsWithGeminiApi(inputPayload, env.GEMINI_API_KEY);
+          await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', modCfg?.model_name || 'gemini-3.8-flash', 'generate-script', 'SUCCESS', 900, 0)
+            .catch(logError => console.warn('Could not record successful Gemini usage:', logError));
           await env.DB.prepare("UPDATE ai_configs SET last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
-            .bind(new Date().toISOString())
-            .run();
+            .bind(new Date().toISOString()).run().catch(configError => console.warn('Could not update Gemini script status:', configError));
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Gemini script error';
-          await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', modCfg.model_name, 'generate-script', 'FALLBACK', 0, 0, msg);
+          console.error('Gemini script generation failed; using structured fallback:', msg);
+          await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', modCfg?.model_name || 'gemini-3.8-flash', 'generate-script', 'FALLBACK', 0, 0, msg)
+            .catch(logError => console.warn('Could not record Gemini fallback:', logError));
           await env.DB.prepare("UPDATE ai_configs SET last_status='ERROR',last_error=?,updated_at=? WHERE module_key='gemini_script'")
-            .bind(msg.slice(0, 300), new Date().toISOString())
-            .run();
+            .bind(msg.slice(0,300),new Date().toISOString()).run().catch(configError => console.warn('Could not update Gemini error status:',configError));
           result = buildStructuredFreeScripts(inputPayload);
         }
       } else {
-        await logAiUsage(env, actor.id, 'gemini_script', 'rule-based-free', 'structured-free', 'generate-script', 'FALLBACK', 0, 0);
+        await logAiUsage(env,actor.id,'gemini_script','rule-based-free','structured-free','generate-script','FALLBACK',0,0)
+          .catch(logError => console.warn('Could not record structured script usage:',logError));
         result = buildStructuredFreeScripts(inputPayload);
       }
-
       return json(result);
     }
 
@@ -2305,6 +2388,28 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         return json({ id, message: 'Đã thêm ngành hàng.' }, 201);
       }
 
+      const industryUpdateMatch = path.match(/^\/api\/admin\/industries\/([a-zA-Z0-9-]+)$/);
+      if (industryUpdateMatch && request.method === 'PUT') {
+        const id = industryUpdateMatch[1];
+        const data = await body(request);
+        const name = str(data.name).replace(/\s+/g, ' ');
+        if (!name || name.length > 100) return fail('Tên ngành hàng phải từ 1 đến 100 ký tự.');
+        const current = await env.DB.prepare('SELECT id,name FROM industries WHERE id=?').bind(id).first<{ id: string; name: string }>();
+        if (!current) return fail('Không tìm thấy ngành hàng.', 404);
+        const duplicate = await env.DB.prepare('SELECT id FROM industries WHERE name=? COLLATE NOCASE AND id<>?').bind(name,id).first();
+        if (duplicate) return fail('Tên ngành hàng này đã tồn tại.', 409);
+        const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${id.slice(-4)}`;
+        const now = new Date().toISOString();
+        await env.DB.batch([
+          env.DB.prepare('UPDATE industries SET name=?,slug=? WHERE id=?').bind(name,slug,id),
+          env.DB.prepare('UPDATE products SET industry=?,updated_at=? WHERE industry=?').bind(name,now,current.name),
+          env.DB.prepare('UPDATE templates SET industry=?,updated_at=? WHERE industry=?').bind(name,now,current.name),
+          env.DB.prepare('UPDATE video_projects SET industry=?,updated_at=? WHERE industry=?').bind(name,now,current.name),
+        ]);
+        await audit(env,actor.id,null,'ADMIN_INDUSTRY_UPDATED',{id,previousName:current.name,name});
+        return json({message:'Đã cập nhật ngành hàng và đồng bộ các dữ liệu liên quan.'});
+      }
+
       if (path === '/api/admin/topics' && request.method === 'POST') {
         const data = await body(request);
         const name = str(data.name).replace(/\s+/g, ' ');
@@ -2320,6 +2425,27 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         ).bind(id, slug, name, order?.next_order || 1).run();
         await audit(env, actor.id, null, 'ADMIN_VIDEO_TOPIC_CREATED', { id, name });
         return json({ id, message: 'Đã thêm chủ đề video.' }, 201);
+      }
+
+      const topicUpdateMatch = path.match(/^\/api\/admin\/topics\/([a-zA-Z0-9-]+)$/);
+      if (topicUpdateMatch && request.method === 'PUT') {
+        const id = topicUpdateMatch[1];
+        const data = await body(request);
+        const name = str(data.name).replace(/\s+/g, ' ');
+        if (!name || name.length > 80) return fail('Tên chủ đề phải từ 1 đến 80 ký tự.');
+        const current = await env.DB.prepare('SELECT id,name FROM video_topics WHERE id=?').bind(id).first<{ id:string; name:string }>();
+        if (!current) return fail('Không tìm thấy chủ đề video.',404);
+        const duplicate = await env.DB.prepare('SELECT id FROM video_topics WHERE name=? COLLATE NOCASE AND id<>?').bind(name,id).first();
+        if (duplicate) return fail('Chủ đề video này đã tồn tại.',409);
+        const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${id.slice(-6)}`;
+        const now = new Date().toISOString();
+        await env.DB.batch([
+          env.DB.prepare('UPDATE video_topics SET name=?,slug=? WHERE id=?').bind(name,slug,id),
+          env.DB.prepare('UPDATE templates SET video_type=?,updated_at=? WHERE video_type=?').bind(name,now,current.name),
+          env.DB.prepare('UPDATE video_projects SET video_type=?,updated_at=? WHERE video_type=?').bind(name,now,current.name),
+        ]);
+        await audit(env,actor.id,null,'ADMIN_VIDEO_TOPIC_UPDATED',{id,previousName:current.name,name});
+        return json({message:'Đã cập nhật chủ đề video và đồng bộ các mẫu/dự án liên quan.'});
       }
 
       if (path === '/api/admin/ai-configs' && request.method === 'GET') {

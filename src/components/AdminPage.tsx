@@ -14,6 +14,7 @@ import {
   Lock,
   Package,
   Plus,
+  Pencil,
   Settings,
   Sliders,
   Trash2,
@@ -21,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import PasswordInput from './PasswordInput';
+import ConfirmDialog from './ConfirmDialog';
 import { api, formatDate, projectStatusLabel, roleLabel, statusLabel } from '../lib/api';
 import type { AICapabilityModule, Industry, User, VideoTemplate, VideoTopic } from '../types';
 
@@ -90,6 +92,11 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
   const [newTplDesc, setNewTplDesc] = useState('');
   const [newIndName, setNewIndName] = useState('');
   const [newTopicName, setNewTopicName] = useState('');
+  const [editingIndustry, setEditingIndustry] = useState<Industry | null>(null);
+  const [editingIndustryName, setEditingIndustryName] = useState('');
+  const [editingTopic, setEditingTopic] = useState<VideoTopic | null>(null);
+  const [editingTopicName, setEditingTopicName] = useState('');
+  const [deleteTemplateTarget, setDeleteTemplateTarget] = useState<VideoTemplate | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -255,6 +262,7 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
     setBusy(true);
     try {
       await api(`/api/admin/templates/${id}`, 'DELETE');
+      setDeleteTemplateTarget(null);
       await loadTab('catalog');
       onRefreshCatalog();
     } catch (e) {
@@ -279,6 +287,18 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
     }
   };
 
+  const saveIndustry = async () => {
+    if (!editingIndustry || !editingIndustryName.trim()) return;
+    setBusy(true); setError(''); setMessage('');
+    try {
+      await api(`/api/admin/industries/${editingIndustry.id}`, 'PUT', { name: editingIndustryName.trim() });
+      setEditingIndustry(null); setEditingIndustryName('');
+      setMessage('Đã cập nhật ngành hàng và đồng bộ các danh mục đang sử dụng.');
+      await loadTab('catalog'); await onRefreshCatalog();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Không thể cập nhật ngành hàng.'); }
+    finally { setBusy(false); }
+  };
+
   const createTopic = async () => {
     const name = newTopicName.trim();
     if (!name) return;
@@ -295,6 +315,18 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const saveTopic = async () => {
+    if (!editingTopic || !editingTopicName.trim()) return;
+    setBusy(true); setError(''); setMessage('');
+    try {
+      await api(`/api/admin/topics/${editingTopic.id}`, 'PUT', { name: editingTopicName.trim() });
+      setEditingTopic(null); setEditingTopicName('');
+      setMessage('Đã cập nhật chủ đề video và đồng bộ các mẫu/dự án liên quan.');
+      await onRefreshCatalog();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Không thể cập nhật chủ đề video.'); }
+    finally { setBusy(false); }
   };
 
   const downloadBackup = async () => {
@@ -365,12 +397,14 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
           {tab === 'dashboard' && stats && (
             <>
               <div className="kpi-grid">
-                <div className="kpi-card">
-                  <small>Tổng người dùng</small>
+                <div className="kpi-card kpi-card-users">
+                  <small><Users size={14} /> Tổng người dùng</small>
                   <strong>{stats.totalUsers}</strong>
-                  <span>
-                    Chờ duyệt: {stats.pendingUsers} · Hoạt động: {stats.activeUsers} · Khóa: {stats.lockedUsers}
-                  </span>
+                  <div className="kpi-status-row" aria-label="Thống kê trạng thái người dùng">
+                    <span className="kpi-status pending">Chờ duyệt <b>{stats.pendingUsers}</b></span>
+                    <span className="kpi-status active">Hoạt động <b>{stats.activeUsers}</b></span>
+                    <span className="kpi-status locked">Khóa <b>{stats.lockedUsers}</b></span>
+                  </div>
                 </div>
                 <div className="kpi-card">
                   <small>Tổng sản phẩm</small>
@@ -810,7 +844,7 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                               <button className="secondary-btn" onClick={() => toggleTemplateActive(t)}>
                                 {t.isActive ? 'Ẩn' : 'Hiện'}
                               </button>
-                              <button title="Xóa" onClick={() => deleteTemplate(t.id)}>
+                              <button title="Xóa" onClick={() => setDeleteTemplateTarget(t)}>
                                 <Trash2 size={14} />
                               </button>
                             </div>
@@ -827,8 +861,28 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                 <div className="search-box">
                   <input value={newIndName} onChange={e => setNewIndName(e.target.value)} placeholder="Tên ngành hàng mới..." />
                   <button className="primary-btn" disabled={busy || !newIndName.trim()} onClick={createIndustry}>
-                    Thêm ngành
+                    <Plus size={15} /> Thêm ngành
                   </button>
+                </div>
+                <div className="catalog-edit-list">
+                  {industries.map(industry => (
+                    <div className="catalog-edit-row" key={industry.id}>
+                      {editingIndustry?.id === industry.id ? (
+                        <>
+                          <input aria-label="Tên ngành hàng" value={editingIndustryName} onChange={e => setEditingIndustryName(e.target.value)} maxLength={100} />
+                          <button className="primary-btn" disabled={busy || !editingIndustryName.trim()} onClick={saveIndustry}>Lưu</button>
+                          <button className="secondary-btn" disabled={busy} onClick={() => { setEditingIndustry(null); setEditingIndustryName(''); }}>Hủy</button>
+                        </>
+                      ) : (
+                        <>
+                          <strong>{industry.name}</strong>
+                          <button className="secondary-btn" disabled={busy} onClick={() => { setEditingIndustry(industry); setEditingIndustryName(industry.name); }}>
+                            <Pencil size={14} /> Sửa
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </section>
 
@@ -847,8 +901,25 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                     <Plus size={15} /> Thêm chủ đề
                   </button>
                 </div>
-                <div className="btn-row">
-                  {topics.map(topic => <span className="pill-badge" key={topic.id}>{topic.name}</span>)}
+                <div className="catalog-edit-list">
+                  {topics.map(topic => (
+                    <div className="catalog-edit-row" key={topic.id}>
+                      {editingTopic?.id === topic.id ? (
+                        <>
+                          <input aria-label="Tên chủ đề video" value={editingTopicName} onChange={e => setEditingTopicName(e.target.value)} maxLength={80} />
+                          <button className="primary-btn" disabled={busy || !editingTopicName.trim()} onClick={saveTopic}>Lưu</button>
+                          <button className="secondary-btn" disabled={busy} onClick={() => { setEditingTopic(null); setEditingTopicName(''); }}>Hủy</button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="pill-badge">{topic.name}</span>
+                          <button className="secondary-btn" disabled={busy} onClick={() => { setEditingTopic(topic); setEditingTopicName(topic.name); }}>
+                            <Pencil size={14} /> Sửa
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </section>
             </>
@@ -968,6 +1039,14 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
           )}
         </div>
       </div>
+      {deleteTemplateTarget && (
+        <ConfirmDialog title="Xóa mẫu video?"
+          message={`Bạn có chắc chắn muốn xóa mẫu “${deleteTemplateTarget.name}” không? Thao tác này không thể hoàn tác.`}
+          confirmLabel="Xóa mẫu video" busy={busy}
+          onCancel={() => setDeleteTemplateTarget(null)}
+          onConfirm={() => void deleteTemplate(deleteTemplateTarget.id)}
+        />
+      )}
     </div>
   );
 }

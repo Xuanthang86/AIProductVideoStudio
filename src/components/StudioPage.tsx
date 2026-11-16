@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import ConfirmDialog from './ConfirmDialog';
 import {
   AlertTriangle,
   ArrowDown,
@@ -146,6 +147,8 @@ export default function StudioPage({
   const [sceneReviews, setSceneReviews] = useState<Record<string, SceneReview>>({});
   const [sceneRenderingIndex, setSceneRenderingIndex] = useState<number | null>(null);
   const [sceneRenderProgress, setSceneRenderProgress] = useState(0);
+  const [deleteSceneIndex, setDeleteSceneIndex] = useState<number | null>(null);
+  const sceneFileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   // MP4 Render state
   const [resolution, setResolution] = useState<RenderResolution>('720p');
@@ -998,7 +1001,7 @@ export default function StudioPage({
                         </button>
                         <button
                           title="Xóa cảnh"
-                          onClick={() => setScenes(prev => prev.filter((_, i) => i !== idx))}
+                          onClick={() => setDeleteSceneIndex(idx)}
                         >
                           <Trash2 size={13} />
                         </button>
@@ -1041,8 +1044,9 @@ export default function StudioPage({
                           min={2}
                           max={30}
                           step={0.5}
-                          value={scene.durationSec}
-                          onChange={e => updateScene(idx, { durationSec: Math.max(2, Number(e.target.value) || 5) })}
+                          value={scene.durationSec || ''}
+                          onChange={e => updateScene(idx, { durationSec: e.target.value === '' ? 0 : Math.min(30, Math.max(2, Number(e.target.value) || 0)) })}
+                          onBlur={() => updateScene(idx, { durationSec: Math.min(30, Math.max(2, Number(scene.durationSec) || 2)) })}
                         />
                       </label>
                     </div>
@@ -1099,8 +1103,22 @@ export default function StudioPage({
                     <div className="form-grid-4">
                       <label className="field-label">
                         Tải ảnh riêng cho cảnh
-                        <input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploadingSceneIndex !== null || !(scene.productId || productId)}
-                          onChange={e => { const file = e.target.files?.[0]; void uploadSceneImage(idx, file); e.currentTarget.value = ''; }} />
+                        <button type="button" className="secondary-btn"
+                          disabled={uploadingSceneIndex !== null || !(scene.productId || productId)}
+                          onClick={() => sceneFileInputRefs.current[idx]?.click()}>
+                          <Plus size={14} /> {uploadingSceneIndex === idx ? 'Đang tải ảnh...' : 'Chọn ảnh từ thiết bị'}
+                        </button>
+                        <input
+                          ref={node => { sceneFileInputRefs.current[idx] = node; }}
+                          type="file" accept="image/jpeg,image/png,image/webp" hidden
+                          disabled={uploadingSceneIndex !== null || !(scene.productId || productId)}
+                          onChange={e => {
+                            const input = e.currentTarget;
+                            const file = input.files?.[0];
+                            input.value = '';
+                            if (file) void uploadSceneImage(idx, file);
+                          }}
+                        />
                         <small className="muted-copy">{uploadingSceneIndex === idx ? 'Đang tải ảnh lên...' : 'JPG, PNG hoặc WEBP · tối đa 5MB'}</small>
                       </label>
                       <label className="field-label">
@@ -1108,12 +1126,13 @@ export default function StudioPage({
                         <select
                           value={scene.imageUrl}
                           onChange={e => {
-                            const img = selectedProduct?.images.find(im => im.imageUrl === e.target.value);
+                            const sceneProduct = products.find(product => product.id === (scene.productId || productId));
+                            const img = sceneProduct?.images.find(im => im.imageUrl === e.target.value);
                             updateScene(idx, { imageUrl: e.target.value, imageId: img?.id || null });
                           }}
                         >
                           <option value="">Nền studio chữ</option>
-                          {selectedProduct?.images.map((im, imIdx) => (
+                          {(products.find(product => product.id === (scene.productId || productId))?.images || []).map((im, imIdx) => (
                             <option key={im.id} value={im.imageUrl}>
                               Ảnh #{imIdx + 1}: {im.fileName.slice(0, 18)}
                             </option>
@@ -1373,6 +1392,18 @@ export default function StudioPage({
           </div>
         </aside>
       </div>
+      {deleteSceneIndex !== null && (
+        <ConfirmDialog title="Xóa phân cảnh?"
+          message={`Bạn có chắc chắn muốn xóa phân cảnh #${deleteSceneIndex + 1} khỏi dự án này không?`}
+          confirmLabel="Xóa phân cảnh"
+          onCancel={() => setDeleteSceneIndex(null)}
+          onConfirm={() => {
+            const index = deleteSceneIndex;
+            setScenes(prev => prev.filter((_, sceneIndex) => sceneIndex !== index));
+            setDeleteSceneIndex(null);
+          }}
+        />
+      )}
     </div>
   );
 }
