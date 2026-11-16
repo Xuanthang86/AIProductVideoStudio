@@ -22,13 +22,13 @@ SOURCES = [
     {
         "id": "gemini-api-pricing",
         "name": "Google Gemini API pricing",
-        "url": "https://ai.google.dev/gemini-api/docs/pricing",
+        "url": "https://ai.google.dev/gemini-api/docs/pricing/",
         "why": "Model pricing, Free Tier availability, quotas and billing conditions.",
     },
     {
         "id": "gemini-api-terms",
         "name": "Google Gemini API additional terms",
-        "url": "https://ai.google.dev/gemini-api/terms",
+        "url": "https://ai.google.dev/gemini-api/terms?authuser=00",
         "why": "Data use, service conditions and terms that affect Free Tier use.",
     },
     {
@@ -93,8 +93,9 @@ def fetch_source(source):
     request = urllib.request.Request(
         source["url"],
         headers={
-            "User-Agent": "AIProductVideoStudio-FreeTierMonitor/1.0 (+https://github.com/Xuanthang86/AIProductVideoStudio)",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
         },
     )
     with urllib.request.urlopen(request, timeout=35) as response:
@@ -107,7 +108,7 @@ def fetch_source(source):
     parser.feed(raw.decode(charset, errors="replace"))
     text = re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
     if len(text) < 500:
-        raise RuntimeError(f"Page content unexpectedly short ({len(text)} characters)")
+        raise RuntimeError(f"Page content unexpectedly short ({len(text)} characters): {text[:240]}")
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     return {
         **source,
