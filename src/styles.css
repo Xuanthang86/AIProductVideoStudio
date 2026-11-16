@@ -3061,6 +3061,15 @@ main,
   border-color: var(--line);
 }
 
+.format-card.is-selected {
+  border-color: var(--blue);
+  background: #f4f8ff;
+}
+
+.format-card.is-selected .format-select {
+  color: var(--navy);
+}
+
 .preview-toggle {
   display: inline-flex;
   align-items: center;
