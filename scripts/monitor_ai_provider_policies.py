@@ -76,11 +76,11 @@ class VisibleText(HTMLParser):
         self.hidden_depth = 0
 
     def handle_starttag(self, tag, attrs):
-        if tag in {"script", "style", "noscript", "svg"}:
+        if tag in {"style", "noscript", "svg"}:
             self.hidden_depth += 1
 
     def handle_endtag(self, tag):
-        if tag in {"script", "style", "noscript", "svg"} and self.hidden_depth:
+        if tag in {"style", "noscript", "svg"} and self.hidden_depth:
             self.hidden_depth -= 1
 
     def handle_data(self, data):
