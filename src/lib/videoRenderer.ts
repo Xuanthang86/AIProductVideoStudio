@@ -697,7 +697,7 @@ export async function renderProjectVideo(options: {
         sceneProgress: (elapsed - acc) / Math.max(0.1, scenes[idx].durationSec),
         sceneIndex: idx,
         totalScenes: scenes.length,
-        productName,
+        productName: scenes[idx].productName || productName,
         ctaText,
       });
       onProgress(Math.min(95, 20 + Math.round((elapsed / totalDurationSec) * 75)), 'Đang ghi video...');
