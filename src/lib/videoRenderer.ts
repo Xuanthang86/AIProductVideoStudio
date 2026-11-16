@@ -314,7 +314,7 @@ export function drawSceneFrame(
   }
 
   // Final scene CTA pill
-  if (!scene.renderedClip && sceneIndex === totalScenes - 1 && ctaText && t > 0.35) {
+  if (sceneIndex === totalScenes - 1 && ctaText && t > 0.35) {
     const ctaFontSize = Math.max(14, Math.round(width * 0.029));
     ctx.font = `700 ${ctaFontSize}px "Be Vietnam Pro", sans-serif`;
     const cw = Math.min(width - padX * 2, ctx.measureText(ctaText).width + width * 0.09);
