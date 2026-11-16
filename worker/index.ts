@@ -559,6 +559,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         service: 'ai-product-video-studio-api',
         capabilities: {
           geminiConfigured: Boolean(env.GEMINI_API_KEY),
+          falConfigured: Boolean(env.FAL_KEY),
           imagekitConfigured: Boolean(env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT),
           kokoroConfigured: Boolean(env.KOKORO_TTS_URL),
           comfyuiConfigured: Boolean(env.COMFYUI_API_URL),
