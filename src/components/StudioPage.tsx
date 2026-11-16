@@ -121,6 +121,8 @@ export default function StudioPage({
   const [scriptNote, setScriptNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [ttsNotice, setTtsNotice] = useState('');
+  const [aiVideoBusy, setAiVideoBusy] = useState<number | null>(null);
+  const [aiVideoStatus, setAiVideoStatus] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -366,6 +368,34 @@ export default function StudioPage({
     setScenes(prev => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   };
 
+  const generateAiSceneVideo = async (index: number) => {
+    const scene = scenes[index];
+    if (!scene?.imageUrl) { setError('Hãy chọn ảnh sản phẩm cho phân cảnh trước khi tạo video AI.'); return; }
+    setAiVideoBusy(index); setAiVideoStatus('Đang gửi yêu cầu tới dịch vụ video AI...'); setError('');
+    try {
+      const savedProjectId = await saveProject();
+      const submitted = await api<{ jobId: string }>('/api/ai/video/submit', 'POST', {
+        projectId: savedProjectId, sceneIndex: index, imageUrl: scene.imageUrl,
+        prompt: scene.visualPrompt || scene.narration || `Animate this product image with subtle cinematic camera movement, realistic lighting, preserve the exact product appearance: ${selectedProduct?.name || title}`,
+      });
+      let videoUrl = '';
+      for (let attempt = 0; attempt < 90; attempt++) {
+        await new Promise(resolve => window.setTimeout(resolve, 5000));
+        const status = await api<{ status: string; videoUrl?: string; error?: string }>(`/api/ai/video/status/${submitted.jobId}`);
+        if (status.status === 'COMPLETED' && status.videoUrl) { videoUrl = status.videoUrl; break; }
+        if (status.status === 'FAILED') throw new Error(status.error || 'Tạo video AI thất bại.');
+        setAiVideoStatus(status.status === 'IN_QUEUE' ? 'Đang chờ dịch vụ xử lý...' : 'Đang tạo video, vui lòng chờ...');
+      }
+      if (!videoUrl) throw new Error('Tác vụ video AI đang xử lý lâu hơn dự kiến. Tác vụ vẫn được lưu trên hệ thống; hãy thử lại sau.');
+      const updatedScenes = scenes.map((item, i) => i === index ? { ...item, aiVideoUrl: videoUrl, sourceType: 'AI_VIDEO' as const } : item);
+      updateScene(index, { aiVideoUrl: videoUrl, sourceType: 'AI_VIDEO' });
+      await saveProject(updatedScenes);
+      setAiVideoStatus('Đã tạo và gắn clip AI vào phân cảnh; clip sẽ được dùng khi xuất video tổng thể.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không thể tạo video AI.'); setAiVideoStatus('');
+    } finally { setAiVideoBusy(null); }
+  };
+
   const moveScene = (index: number, dir: -1 | 1) => {
     const target = index + dir;
     if (target < 0 || target >= scenes.length) return;
@@ -404,11 +434,12 @@ export default function StudioPage({
       });
       if (res.available && res.audioBase64) {
         const audio = new Audio(`data:${res.mimeType || 'audio/wav'};base64,${res.audioBase64}`);
+        audio.playbackRate = voiceConfig.speed;
         audio.play();
-        setTtsNotice('Đang phát thử giọng đọc Kokoro Vietnamese từ máy chủ.');
+        setTtsNotice('Đang phát thử giọng đọc Gemini AI tiếng Việt.');
         return;
       }
-      setTtsNotice(res.reason || 'Máy chủ Kokoro TTS chưa sẵn sàng.');
+      setTtsNotice(res.reason || 'Dịch vụ Gemini TTS chưa sẵn sàng.');
     } catch (e) {
       setTtsNotice(e instanceof Error ? e.message : 'Không kiểm tra được dịch vụ TTS.');
     }
@@ -423,7 +454,7 @@ export default function StudioPage({
     }
   };
 
-  const saveProject = async (): Promise<string> => {
+  const saveProject = async (scenesOverride?: VideoScene[]): Promise<string> => {
     setSaving(true);
     setError('');
     try {
@@ -441,7 +472,7 @@ export default function StudioPage({
         ctaText,
         voiceConfig,
         musicConfig,
-        scenes,
+        scenes: scenesOverride || scenes,
       };
       if (projectId) {
         await api(`/api/projects/${projectId}`, 'PUT', payload);
@@ -505,7 +536,7 @@ export default function StudioPage({
               const bytes = new Uint8Array(binary.length);
               for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
               const audioBuffer = await audioContext.decodeAudioData(bytes.buffer.slice(0));
-              voiceovers.push({ audioBuffer, startSec: sceneStartSec, volume: 1 });
+              voiceovers.push({ audioBuffer, startSec: sceneStartSec, volume: 1, playbackRate: voiceConfig.speed });
             }
             sceneStartSec += Math.max(1, scenes[i].durationSec);
           }
@@ -815,6 +846,20 @@ export default function StudioPage({
                       </label>
                     </div>
 
+                    {scene.aiVideoUrl && (
+                      <div className="ai-video-result">
+                        <video src={scene.aiVideoUrl} controls playsInline preload="metadata" style={{ width: '100%', maxHeight: 280, borderRadius: 12 }} />
+                        <a className="secondary-btn" href={scene.aiVideoUrl} target="_blank" rel="noreferrer" download>Mở / tải video AI</a>
+                        <p className="muted-copy">Clip AI sẽ được dùng làm hình ảnh chuyển động khi xuất video tổng thể.</p>
+                      </div>
+                    )}
+                    <div className="btn-row">
+                      <button className="secondary-btn" disabled={aiVideoBusy !== null || !scene.imageUrl} onClick={() => generateAiSceneVideo(idx)}>
+                        {aiVideoBusy === idx ? <><Loader2 size={14} /> Đang tạo video AI...</> : <><WandSparkles size={14} /> {scene.aiVideoUrl ? 'Tạo lại video AI' : 'Tạo video AI từ ảnh này'}</>}
+                      </button>
+                      {aiVideoBusy === idx && <span className="muted-copy">{aiVideoStatus}</span>}
+                    </div>
+                    <small className="muted-copy">MiniMax H3 Max qua fal.ai: clip 5 giây 768p khoảng 0,40 USD theo giá hiện hành; giá có thể thay đổi.</small>
                     <label className="field-label">
                       Lời thoại / Phụ đề
                       <textarea
@@ -938,7 +983,7 @@ export default function StudioPage({
                       <Volume2 size={14} /> Nghe thử giọng đọc
                     </button>
                     {ttsNotice && <p className="tts-notice">{ttsNotice}</p>}
-                    <p className="tts-notice">Khi xuất video có giọng đọc, hệ thống cần máy chủ Kokoro TTS đã được cấu hình; giọng đọc trình duyệt chỉ dùng để nghe thử.</p>
+                    <p className="tts-notice">Giọng đọc tiếng Việt được tạo bằng Gemini TTS qua Cloudflare Worker; không cần cài đặt hoặc vận hành máy chủ Kokoro riêng.</p>
                   </>
                 )}
                 {!voiceConfig.enabled && (

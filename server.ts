@@ -31,6 +31,7 @@ async function startServer() {
     IMAGEKIT_PRIVATE_KEY: process.env.IMAGEKIT_PRIVATE_KEY,
     IMAGEKIT_URL_ENDPOINT: process.env.IMAGEKIT_URL_ENDPOINT,
     KOKORO_TTS_URL: process.env.KOKORO_TTS_URL,
+    FAL_KEY: process.env.FAL_KEY,
     COMFYUI_API_URL: process.env.COMFYUI_API_URL,
     AI_CALLER: {
       analyzeProduct: analyzeProductWithGemini,

@@ -126,6 +126,7 @@ export interface VideoScene {
   onScreenText: string;
   imageId?: string | null;
   imageUrl: string;
+  aiVideoUrl?: string | null;
   sourceType: SceneSourceType;
   motionType: MotionType;
   transitionType: TransitionType;

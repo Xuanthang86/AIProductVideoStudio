@@ -50,6 +50,7 @@ export interface Env {
   IMAGEKIT_PRIVATE_KEY?: string;
   IMAGEKIT_URL_ENDPOINT?: string;
   KOKORO_TTS_URL?: string;
+  FAL_KEY?: string;
   COMFYUI_API_URL?: string;
   AI_CALLER?: AICaller;
 }
@@ -1131,8 +1132,10 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             : m.module_key.startsWith('gemini')
               ? Boolean(env.GEMINI_API_KEY)
               : m.module_key === 'kokoro_tts'
-                ? Boolean(env.KOKORO_TTS_URL)
-                : m.module_key === 'comfyui_image'
+                ? Boolean(env.GEMINI_API_KEY)
+                : m.module_key === 'wan_video'
+                  ? Boolean(env.FAL_KEY && env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT)
+                  : m.module_key === 'comfyui_image'
                   ? Boolean(env.COMFYUI_API_URL)
                   : false,
       }));
@@ -1299,42 +1302,133 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         await logAiUsage(env, actor.id, 'kokoro_tts', 'kokoro-selfhosted', modCfg.model_name, 'tts', 'LIMIT_REACHED', 0, 0, 'AI module quota reached');
         return json({ available: false, reason: 'Mô-đun AI Voice đã đạt hạn mức sử dụng ngày/tháng do quản trị viên thiết lập.', fallback: 'browser-speech-or-silent' });
       }
-      if (!env.KOKORO_TTS_URL) {
-        await logAiUsage(env, actor.id, 'kokoro_tts', 'kokoro-selfhosted', modCfg.model_name, 'tts', 'UNAVAILABLE', 0, 0, 'KOKORO_TTS_URL not configured');
-        return json({
-          available: false,
-          reason: 'Máy chủ Kokoro Vietnamese TTS chưa được kết nối (chưa cấu hình KOKORO_TTS_URL). Bạn có thể nghe thử qua giọng đọc trình duyệt hoặc dựng video với nhạc nền không lời thoại.',
-          fallback: 'browser-speech-or-silent',
-        });
+      if (!env.GEMINI_API_KEY) {
+        await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', 'gemini-3.8-flash-lite-tts', 'tts', 'UNAVAILABLE', 0, 0, 'GEMINI_API_KEY not configured');
+        return json({ available: false, reason: 'Chưa cấu hình khóa Gemini API cho chức năng tạo giọng đọc.', fallback: 'browser-speech-or-silent' });
       }
       const data = await body(request);
       const text = str(data.text);
       const voice = str(data.voice) || 'vi-female-young';
-      const speed = Math.min(1.5, Math.max(0.7, num(data.speed, 1)));
       if (!text || text.length > 2000) return fail('Nội dung đọc phải từ 1 đến 2000 ký tự.');
-
+      const voiceMap: Record<string, string> = {
+        'vi-female-young': 'Aoede', 'vi-male-pro': 'Charon', 'vi-female-luxury': 'Kore',
+        'vi-ad-energetic': 'Puck', 'vi-review-natural': 'Aoede',
+      };
+      const voiceName = voiceMap[voice] || 'Aoede';
       try {
-        const resp = await fetch(env.KOKORO_TTS_URL, {
+        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-lite-tts:generateContent', {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text, voice, speed, language: 'vi' }),
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text }] }],
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: { languageCode: 'vi-VN', voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+            },
+          }),
         });
-        if (!resp.ok) throw new Error(`Kokoro HTTP ${resp.status}`);
-        const audioBuf = await resp.arrayBuffer();
-        const bytesArr = new Uint8Array(audioBuf);
-        let binary = '';
-        for (let i = 0; i < bytesArr.length; i++) binary += String.fromCharCode(bytesArr[i]);
-        await logAiUsage(env, actor.id, 'kokoro_tts', 'kokoro-selfhosted', modCfg.model_name, 'tts', 'SUCCESS', text.length, 0);
-        return json({ available: true, mimeType: resp.headers.get('content-type') || 'audio/wav', audioBase64: btoa(binary) });
+        if (!resp.ok) throw new Error(`Gemini TTS HTTP ${resp.status}: ${(await resp.text()).slice(0, 400)}`);
+        const payload = await resp.json() as { candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }> };
+        const audioPart = payload.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data)?.inlineData;
+        if (!audioPart?.data) throw new Error('Gemini TTS không trả về dữ liệu âm thanh.');
+        await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', 'gemini-3.8-flash-lite-tts', 'tts', 'SUCCESS', text.length, 0);
+        await env.DB.prepare("UPDATE ai_configs SET provider='google-gemini',model_name='gemini-3.8-flash-lite-tts',last_status='READY',last_error=NULL,updated_at=? WHERE module_key='kokoro_tts'")
+          .bind(new Date().toISOString()).run();
+        return json({ available: true, mimeType: audioPart.mimeType || 'audio/wav', audioBase64: audioPart.data, provider: 'Gemini TTS' });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Kokoro connection failed';
-        await logAiUsage(env, actor.id, 'kokoro_tts', 'kokoro-selfhosted', modCfg.model_name, 'tts', 'ERROR', 0, 0, msg);
-        return json({
-          available: false,
-          reason: `Không kết nối được máy chủ Kokoro TTS (${msg}). Hãy dùng chế độ nghe thử trình duyệt hoặc không dùng giọng đọc.`,
-          fallback: 'browser-speech-or-silent',
-        });
+        const msg = err instanceof Error ? err.message : 'Gemini TTS error';
+        await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', 'gemini-3.8-flash-lite-tts', 'tts', 'ERROR', 0, 0, msg);
+        await env.DB.prepare("UPDATE ai_configs SET last_status='ERROR',last_error=?,updated_at=? WHERE module_key='kokoro_tts'")
+          .bind(msg.slice(0, 300), new Date().toISOString()).run();
+        return json({ available: false, reason: `Gemini TTS chưa tạo được giọng đọc: ${msg}`, fallback: 'browser-speech-or-silent' });
       }
+    }
+
+    if (path === '/api/ai/video/submit' && request.method === 'POST') {
+      const quota = await getOrCreateQuota(env, actor.id);
+      if (!quota.can_use_ai_video && actor.role !== 'SUPER_ADMIN') return fail('Tài khoản chưa được cấp quyền tạo video AI.', 403);
+      const modCfg = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='wan_video'").first<AIConfigRow>();
+      if (!modCfg?.is_enabled) return fail('Mô-đun tạo video AI đang được quản trị viên tắt.', 503);
+      if (!env.FAL_KEY) return fail('Chưa cấu hình FAL_KEY trong Cloudflare Worker Secrets. Không cần máy chủ GPU riêng; dịch vụ tạo video được cung cấp trên nền tảng fal.ai.', 503);
+      if (!env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) return fail('Cần cấu hình ImageKit để lưu video AI sau khi tạo.', 503);
+      if (!(await aiModuleWithinLimits(env, modCfg))) return fail('Mô-đun tạo video AI đã đạt hạn mức ngày/tháng.', 429);
+      const data = await body(request);
+      const projectId = str(data.projectId);
+      const sceneIndex = Math.max(0, Math.floor(num(data.sceneIndex)));
+      const prompt = str(data.prompt);
+      const imageUrl = str(data.imageUrl);
+      const project = await env.DB.prepare('SELECT id FROM video_projects WHERE id=? AND user_id=?').bind(projectId, actor.id).first();
+      if (!project) return fail('Không tìm thấy dự án hoặc bạn không có quyền truy cập.', 404);
+      if (!prompt || prompt.length > 1500) return fail('Mô tả chuyển động phải từ 1 đến 1500 ký tự.');
+      if (!imageUrl) return fail('Phân cảnh cần có ảnh sản phẩm để tạo video AI.');
+      const parsedImageUrl = new URL(imageUrl);
+      if (parsedImageUrl.origin !== new URL(env.IMAGEKIT_URL_ENDPOINT).origin || parsedImageUrl.protocol !== 'https:') return fail('Ảnh đầu vào phải được lưu trên ImageKit đã cấu hình.', 400);
+      const endpoint = 'minimax/h3-max/image-to-video';
+      const falResponse = await fetch(`https://queue.fal.run/${endpoint}`, {
+        method: 'POST',
+        headers: { authorization: `Key ${env.FAL_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ image_url: imageUrl, prompt, duration: 5, resolution: '768P', prompt_expansion_mode: 'balanced', enable_safety_checker: true }),
+      });
+      if (!falResponse.ok) {
+        const detail = (await falResponse.text()).slice(0, 400);
+        await logAiUsage(env, actor.id, 'wan_video', 'fal.ai', modCfg.model_name, 'image-to-video', 'ERROR', 0, 0, detail);
+        return fail(`Dịch vụ tạo video AI từ chối yêu cầu (${falResponse.status}): ${detail}`, 502);
+      }
+      const queued = await falResponse.json() as { request_id?: string };
+      if (!queued.request_id) return fail('Dịch vụ video AI không trả về mã tác vụ hợp lệ.', 502);
+      const jobId = uuid();
+      await env.DB.prepare('INSERT INTO ai_video_jobs(id,user_id,project_id,scene_index,provider_request_id,status) VALUES(?,?,?,?,?,?)')
+        .bind(jobId, actor.id, projectId, sceneIndex, queued.request_id, 'IN_QUEUE').run();
+      await logAiUsage(env, actor.id, 'wan_video', 'fal.ai', modCfg.model_name, 'image-to-video', 'QUEUED', 0, 0);
+      return json({ jobId, status: 'IN_QUEUE', provider: 'fal.ai', model: modCfg.model_name });
+    }
+
+    const aiVideoStatusMatch = path.match(/^\/api\/ai\/video\/status\/([0-9a-f-]+)$/);
+    if (aiVideoStatusMatch && request.method === 'GET') {
+      const job = await env.DB.prepare('SELECT * FROM ai_video_jobs WHERE id=? AND user_id=?').bind(aiVideoStatusMatch[1], actor.id)
+        .first<{ id: string; project_id: string; scene_index: number; provider_request_id: string; status: string; video_url: string | null; imagekit_file_id: string | null; error_message: string | null }>();
+      if (!job) return fail('Không tìm thấy tác vụ video AI.', 404);
+      if (job.status === 'COMPLETED' && job.video_url) return json({ status: 'COMPLETED', videoUrl: job.video_url, sceneIndex: job.scene_index });
+      if (job.status === 'FAILED') return json({ status: 'FAILED', error: job.error_message || 'Tạo video AI thất bại.' });
+      const endpoint = 'minimax/h3-max/image-to-video';
+      const statusResponse = await fetch(`https://queue.fal.run/${endpoint}/requests/${job.provider_request_id}/status`, {
+        headers: { authorization: `Key ${env.FAL_KEY}` },
+      });
+      if (!statusResponse.ok) return fail('Không kiểm tra được tiến độ từ nhà cung cấp video AI.', 502);
+      const statusData = await statusResponse.json() as { status?: string; error?: string };
+      if (statusData.status === 'FAILED') {
+        const reason = statusData.error || 'Nhà cung cấp không thể tạo video.';
+        await env.DB.prepare("UPDATE ai_video_jobs SET status='FAILED',error_message=?,updated_at=? WHERE id=?")
+          .bind(reason.slice(0, 500), new Date().toISOString(), job.id).run();
+        await logAiUsage(env, actor.id, 'wan_video', 'fal.ai', 'minimax-h3-max', 'image-to-video', 'ERROR', 0, 0, reason);
+        return json({ status: 'FAILED', error: reason });
+      }
+      if (statusData.status !== 'COMPLETED') return json({ status: statusData.status || 'IN_PROGRESS' });
+      const resultResponse = await fetch(`https://queue.fal.run/${endpoint}/requests/${job.provider_request_id}`, {
+        headers: { authorization: `Key ${env.FAL_KEY}` },
+      });
+      if (!resultResponse.ok) return fail('Không lấy được kết quả video AI.', 502);
+      const resultData = await resultResponse.json() as { video?: { url?: string } };
+      if (!resultData.video?.url) return fail('Nhà cung cấp không trả về tệp video.', 502);
+      let finalUrl = resultData.video.url;
+      let fileId: string | null = null;
+      try {
+        const videoResponse = await fetch(finalUrl);
+        if (videoResponse.ok) {
+          const videoBlob = await videoResponse.blob();
+          if (videoBlob.size > 0 && videoBlob.size <= 50 * 1024 * 1024) {
+            const videoFile = new File([videoBlob], `ai-video-${job.id}.mp4`, { type: 'video/mp4' });
+            const stored = await uploadVideoToImageKit(env, videoFile);
+            finalUrl = stored.url; fileId = stored.fileId;
+          }
+        }
+      } catch (storageError) {
+        console.warn('Could not copy generated AI video to ImageKit; retaining provider URL:', storageError);
+      }
+      await env.DB.prepare("UPDATE ai_video_jobs SET status='COMPLETED',video_url=?,imagekit_file_id=?,updated_at=? WHERE id=?")
+        .bind(finalUrl, fileId, new Date().toISOString(), job.id).run();
+      await logAiUsage(env, actor.id, 'wan_video', 'fal.ai', 'minimax-h3-max', 'image-to-video', 'SUCCESS', 0, 0);
+      return json({ status: 'COMPLETED', videoUrl: finalUrl, sceneIndex: job.scene_index, storedOnImageKit: Boolean(fileId) });
     }
 
     // Video Projects & Scenes
@@ -1443,7 +1537,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       for (let i = 0; i < scenes.length; i++) {
         const s = scenes[i] as Record<string, unknown>;
         await env.DB.prepare(
-          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,image_id,image_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
           .bind(
             uuid(),
@@ -1454,6 +1548,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             str(s.onScreenText),
             str(s.imageId) || null,
             str(s.imageUrl),
+            str(s.aiVideoUrl) || null,
             ['REAL_PRODUCT', 'AI_GENERATED', 'AI_VIDEO', 'USER_VIDEO'].includes(str(s.sourceType)) ? str(s.sourceType) : 'REAL_PRODUCT',
             str(s.motionType) || 'zoom-in',
             str(s.transitionType) || 'fade',
@@ -1520,6 +1615,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             onScreenText: s.on_screen_text,
             imageId: s.image_id,
             imageUrl: s.image_url,
+            aiVideoUrl: s.ai_video_url || null,
             sourceType: s.source_type,
             motionType: s.motion_type,
             transitionType: s.transition_type,
@@ -1579,7 +1675,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           for (let i = 0; i < data.scenes.length; i++) {
             const s = data.scenes[i] as Record<string, unknown>;
             await env.DB.prepare(
-              'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,image_id,image_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+              'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
             )
               .bind(
                 str(s.id) || uuid(),
@@ -1590,6 +1686,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
                 str(s.onScreenText),
                 str(s.imageId) || null,
                 str(s.imageUrl),
+                str(s.aiVideoUrl) || null,
                 ['REAL_PRODUCT', 'AI_GENERATED', 'AI_VIDEO', 'USER_VIDEO'].includes(str(s.sourceType))
                   ? str(s.sourceType)
                   : 'REAL_PRODUCT',
@@ -1652,7 +1749,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .all<Record<string, unknown>>();
       for (const s of scenes.results) {
         await env.DB.prepare(
-          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,image_id,image_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
           .bind(
             uuid(),
@@ -1663,6 +1760,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             s.on_screen_text,
             s.image_id,
             s.image_url,
+            s.ai_video_url || null,
             s.source_type,
             s.motion_type,
             s.transition_type,

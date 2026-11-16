@@ -7,6 +7,7 @@ export interface VoiceoverTrack {
   audioBuffer: AudioBuffer;
   startSec: number;
   volume?: number;
+  playbackRate?: number;
 }
 
 export interface RenderResult {
@@ -69,11 +70,19 @@ export function checkDeviceRenderSafety(resolution: RenderResolution, durationSe
 async function loadImageElement(url: string): Promise<HTMLImageElement | null> {
   if (!url) return null;
   return new Promise(resolve => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-    img.src = url;
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img); img.onerror = () => resolve(null); img.src = url;
+  });
+}
+
+async function loadVideoElement(url: string): Promise<HTMLVideoElement | null> {
+  if (!url) return null;
+  return new Promise(resolve => {
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous'; video.muted = true; video.loop = true;
+    video.playsInline = true; video.preload = 'auto';
+    video.onloadeddata = () => resolve(video); video.onerror = () => resolve(null);
+    video.src = url; video.load();
   });
 }
 
@@ -101,7 +110,7 @@ export function drawSceneFrame(
   height: number,
   options: {
     scene: VideoScene;
-    image: HTMLImageElement | null;
+    image: HTMLImageElement | HTMLVideoElement | null;
     sceneProgress: number;
     sceneIndex: number;
     totalScenes: number;
@@ -184,7 +193,9 @@ export function drawSceneFrame(
   const stageH = height * 0.52;
 
   if (image) {
-    const imgRatio = image.naturalWidth / Math.max(1, image.naturalHeight);
+    const mediaWidth = image instanceof HTMLVideoElement ? image.videoWidth : image.naturalWidth;
+    const mediaHeight = image instanceof HTMLVideoElement ? image.videoHeight : image.naturalHeight;
+    const imgRatio = mediaWidth / Math.max(1, mediaHeight);
     const boxRatio = stageW / stageH;
     let drawW = stageW;
     let drawH = stageH;
@@ -338,6 +349,7 @@ async function synthesizeMusicTrack(
     if (!clip.audioBuffer || clip.startSec >= totalDurationSec) continue;
     const source = offline.createBufferSource();
     source.buffer = clip.audioBuffer;
+    source.playbackRate.value = Math.min(1.5, Math.max(0.7, clip.playbackRate ?? 1));
     const gain = offline.createGain();
     gain.gain.value = Math.min(1.5, Math.max(0, clip.volume ?? 1));
     source.connect(gain);
@@ -420,7 +432,8 @@ export async function renderProjectVideo(options: {
   const totalDurationSec = scenes.reduce((sum, s) => sum + Math.max(1, s.durationSec), 0);
 
   onProgress(5, 'Đang tải hình ảnh sản phẩm...');
-  const loadedImages = await Promise.all(scenes.map(s => loadImageElement(s.imageUrl)));
+  const loadedImages = await Promise.all(scenes.map(s => s.aiVideoUrl ? loadVideoElement(s.aiVideoUrl) : loadImageElement(s.imageUrl)));
+  if (scenes.some((scene, index) => scene.aiVideoUrl && !loadedImages[index])) throw new Error('Không tải được một clip AI của dự án. Hãy kiểm tra lại liên kết video hoặc tạo lại phân cảnh.');
 
   if (signal?.aborted) throw new Error('RENDER_CANCELLED');
 
@@ -430,7 +443,9 @@ export async function renderProjectVideo(options: {
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Trình duyệt không hỗ trợ Canvas 2D.');
 
-  const webCodecsOk = typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
+  // AI video clips use real-time MediaRecorder rendering to preserve motion.
+  const hasAiVideoScenes = scenes.some(scene => Boolean(scene.aiVideoUrl));
+  const webCodecsOk = !hasAiVideoScenes && typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
 
   if (webCodecsOk) {
     try {
@@ -666,9 +681,19 @@ export async function renderProjectVideo(options: {
         }
         acc += scenes[i].durationSec;
       }
+      const activeMedia = loadedImages[idx];
+      loadedImages.forEach(media => { if (media instanceof HTMLVideoElement && media !== activeMedia && !media.paused) media.pause(); });
+      if (activeMedia instanceof HTMLVideoElement) {
+        const sceneElapsed = Math.max(0, elapsed - acc);
+        if (Number.isFinite(activeMedia.duration) && activeMedia.duration > 0 && activeMedia.readyState >= 2) {
+          const targetTime = sceneElapsed % activeMedia.duration;
+          if (Math.abs(activeMedia.currentTime - targetTime) > 0.4) activeMedia.currentTime = targetTime;
+        }
+        if (activeMedia.paused) activeMedia.play().catch(() => {});
+      }
       drawSceneFrame(ctx, width, height, {
         scene: scenes[idx],
-        image: loadedImages[idx],
+        image: activeMedia,
         sceneProgress: (elapsed - acc) / Math.max(0.1, scenes[idx].durationSec),
         sceneIndex: idx,
         totalScenes: scenes.length,
@@ -684,6 +709,7 @@ export async function renderProjectVideo(options: {
   recorder.stop();
   const blob = await stopped;
   if (audioContext) await audioContext.close().catch(() => {});
+  loadedImages.forEach(media => { if (media instanceof HTMLVideoElement) { media.pause(); media.removeAttribute('src'); media.load(); } });
   const format = mimeType.includes('mp4') ? 'mp4' : 'webm';
   onProgress(100, 'Hoàn tất dựng video!');
   return {
