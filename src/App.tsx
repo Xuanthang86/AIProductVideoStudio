@@ -79,7 +79,7 @@ export default function App() {
   const [route, setRoute] = useState<string>(() => normalizePath(window.location.pathname));
   const [mobileMenu, setMobileMenu] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [selected, setSelected] = useState('Video quảng cáo');
+  const [selected, setSelected] = useState('');
   const [heroPreviewPlaying, setHeroPreviewPlaying] = useState(true);
   const [heroPreviewElapsed, setHeroPreviewElapsed] = useState(0);
   const heroPreviewElapsedRef = useRef(0);
@@ -564,7 +564,7 @@ export default function App() {
                       {heroPreviewPlaying ? 'Đang phát' : 'Phát video'}
                     </button>
                     <div className="timeline">
-                      <i />
+                      <i style={{ width: String((heroPreviewElapsed / 15) * 100) + '%' }} />
                     </div>
                     <span aria-live="off">{previewElapsedLabel} / 00:15</span>
                   </div>
@@ -637,10 +637,6 @@ export default function App() {
                     </button>
                   );
                 })}
-              </div>
-              <div className="format-selection-summary" aria-live="polite" aria-atomic="true">
-                <strong>Phong cách đang chọn: {selected}</strong>
-                <p>{landingFormats.find(format => format.name === selected)?.detail}</p>
               </div>
             </section>
 

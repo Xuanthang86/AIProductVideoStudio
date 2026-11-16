@@ -129,6 +129,7 @@ export default function StudioPage({
   const loadedImgCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const [previewTime, setPreviewTime] = useState(0);
+  const [uploadingSceneIndex, setUploadingSceneIndex] = useState<number | null>(null);
 
   // MP4 Render state
   const [resolution, setResolution] = useState<RenderResolution>('720p');
@@ -364,6 +365,36 @@ export default function StudioPage({
 
   const updateScene = (index: number, patch: Partial<VideoScene>) => {
     setScenes(prev => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+  };
+
+  const uploadSceneImage = async (index: number, file?: File) => {
+    if (!file) return;
+    if (!productId) { setError('Vui lòng chọn sản phẩm trước khi tải ảnh riêng cho phân cảnh.'); return; }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setError('Ảnh phân cảnh chỉ hỗ trợ JPG, PNG hoặc WEBP.'); return; }
+    if (file.size > 5 * 1024 * 1024) { setError('Dung lượng ảnh mỗi phân cảnh tối đa 5MB.'); return; }
+    setUploadingSceneIndex(index); setError('');
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Không đọc được tệp ảnh.'));
+        reader.onerror = () => reject(new Error('Không thể đọc tệp ảnh.'));
+        reader.readAsDataURL(file);
+      });
+      const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => reject(new Error('Tệp tải lên không phải ảnh hợp lệ.'));
+        image.src = dataUrl;
+      });
+      const response = await api<{ image: Product['images'][number] }>(`/api/products/${productId}/images`, 'POST', {
+        fileName: file.name, mimeType: file.type, base64: dataUrl, ...dimensions,
+      });
+      updateScene(index, { imageId: response.image.id, imageUrl: response.image.imageUrl, sourceType: 'REAL_PRODUCT' });
+      setProducts(prev => prev.map(product => product.id === productId ? { ...product, images: [...product.images, response.image] } : product));
+      setMessage(`Đã tải ảnh riêng cho phân cảnh #${index + 1}.`);
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Không thể tải ảnh phân cảnh.');
+    } finally { setUploadingSceneIndex(null); }
   };
 
   const moveScene = (index: number, dir: -1 | 1) => {
@@ -802,6 +833,10 @@ export default function StudioPage({
                       <label className="field-label">
                         Chữ hiển thị trên màn hình
                         <input value={scene.onScreenText} onChange={e => updateScene(idx, { onScreenText: e.target.value })} />
+                        <span className="switch-inline">
+                          <input type="checkbox" checked={scene.showOnScreenText !== false} onChange={e => updateScene(idx, { showOnScreenText: e.target.checked })} />
+                          <span>{scene.showOnScreenText === false ? 'Đang ẩn chữ trên video' : 'Hiển thị chữ trên video'}</span>
+                        </span>
                       </label>
                       <label className="field-label">
                         Thời lượng (giây)
@@ -844,6 +879,12 @@ export default function StudioPage({
                     </label>
 
                     <div className="form-grid-4">
+                      <label className="field-label">
+                        Tải ảnh riêng cho cảnh
+                        <input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploadingSceneIndex !== null || !productId}
+                          onChange={e => { const file = e.target.files?.[0]; void uploadSceneImage(idx, file); e.currentTarget.value = ''; }} />
+                        <small className="muted-copy">{uploadingSceneIndex === idx ? 'Đang tải ảnh lên...' : 'JPG, PNG hoặc WEBP · tối đa 5MB'}</small>
+                      </label>
                       <label className="field-label">
                         Hình ảnh cảnh
                         <select

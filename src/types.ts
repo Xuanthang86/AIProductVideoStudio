@@ -124,6 +124,7 @@ export interface VideoScene {
   durationSec: number;
   narration: string;
   onScreenText: string;
+  showOnScreenText?: boolean;
   imageId?: string | null;
   imageUrl: string;
   aiVideoUrl?: string | null;

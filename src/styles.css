@@ -3020,10 +3020,6 @@ main,
   animation: hero-caption-glow 3.8s ease-in-out infinite;
 }
 
-.product-stage.is-playing + .preview-controls .timeline i {
-  animation: hero-preview-progress 15s linear infinite;
-}
-
 @keyframes hero-product-float {
   0%, 100% { transform: translate(-50%, -48%) rotate(-1deg) scale(1); }
   50% { transform: translate(-50%, -51%) rotate(1.5deg) scale(1.035); }
@@ -3090,15 +3086,6 @@ main,
   outline-offset: 4px;
   border-radius: 3px;
 }
-
-.product-stage.is-playing + .preview-controls .timeline i {
-  animation: hero-preview-progress 15s linear infinite;
-}
-
-.product-stage.is-paused + .preview-controls .timeline i {
-  animation-play-state: paused !important;
-}
-
 
 /* Mobile navigation, compact account control and direct account creation */
 .mobile-menu-backdrop { display: none; }

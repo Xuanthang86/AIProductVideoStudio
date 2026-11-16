@@ -1517,7 +1517,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       for (let i = 0; i < scenes.length; i++) {
         const s = scenes[i] as Record<string, unknown>;
         await env.DB.prepare(
-          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
           .bind(
             uuid(),
@@ -1526,6 +1526,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             Math.max(2, num(s.durationSec, 5)),
             str(s.narration),
             str(s.onScreenText),
+            s.showOnScreenText === false ? 0 : 1,
             str(s.imageId) || null,
             str(s.imageUrl),
             str(s.aiVideoUrl) || null,
@@ -1593,6 +1594,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             durationSec: s.duration_sec,
             narration: s.narration,
             onScreenText: s.on_screen_text,
+            showOnScreenText: s.show_on_screen_text === null || s.show_on_screen_text === undefined ? true : Boolean(s.show_on_screen_text),
             imageId: s.image_id,
             imageUrl: s.image_url,
             aiVideoUrl: s.ai_video_url || null,
@@ -1655,7 +1657,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           for (let i = 0; i < data.scenes.length; i++) {
             const s = data.scenes[i] as Record<string, unknown>;
             await env.DB.prepare(
-              'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+              'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
             )
               .bind(
                 str(s.id) || uuid(),
@@ -1664,6 +1666,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
                 Math.max(2, num(s.durationSec, 5)),
                 str(s.narration),
                 str(s.onScreenText),
+                s.showOnScreenText === false ? 0 : 1,
                 str(s.imageId) || null,
                 str(s.imageUrl),
                 str(s.aiVideoUrl) || null,
@@ -1729,7 +1732,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .all<Record<string, unknown>>();
       for (const s of scenes.results) {
         await env.DB.prepare(
-          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO video_scenes(id,project_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
           .bind(
             uuid(),
@@ -1738,6 +1741,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             s.duration_sec,
             s.narration,
             s.on_screen_text,
+            s.show_on_screen_text === 0 ? 0 : 1,
             s.image_id,
             s.image_url,
             s.ai_video_url || null,

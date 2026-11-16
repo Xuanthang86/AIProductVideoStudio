@@ -272,7 +272,7 @@ export function drawSceneFrame(
   const bottomStart = height * 0.74;
   ctx.save();
 
-  if (scene.onScreenText) {
+  if (scene.showOnScreenText !== false && scene.onScreenText) {
     ctx.font = `800 ${Math.max(18, Math.round(width * 0.042))}px "Be Vietnam Pro", sans-serif`;
     const lines = wrapTextLines(ctx, scene.onScreenText, width - padX * 2).slice(0, 2);
     ctx.textAlign = 'center';
