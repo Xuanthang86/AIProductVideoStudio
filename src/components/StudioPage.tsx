@@ -96,6 +96,7 @@ export default function StudioPage({
   quota,
   initialProductId,
   initialTemplate,
+  initialVideoType,
   initialProjectId,
   onGoProducts,
   onGoMyVideos,
