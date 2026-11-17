@@ -695,21 +695,7 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                 </div>
               )}
 
-              {deleteTarget && (
-                <div className="inline-confirm-box danger">
-                  <p>
-                    Xác nhận xóa vĩnh viễn tài khoản <b>{deleteTarget.email}</b> cùng toàn bộ dữ liệu liên quan?
-                  </p>
-                  <div className="inline-confirm-actions">
-                    <button className="auth-logout" onClick={() => userAction(deleteTarget.id, 'delete')}>
-                      Xác nhận xóa
-                    </button>
-                    <button className="secondary-btn" onClick={() => setDeleteTarget(null)}>
-                      Hủy
-                    </button>
-                  </div>
-                </div>
-              )}
+
             </section>
           )}
 
@@ -1054,6 +1040,16 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
           )}
         </div>
       </div>
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Xóa tài khoản?"
+          message={`Bạn có chắc chắn muốn xóa vĩnh viễn tài khoản “${deleteTarget.email}” cùng dữ liệu liên quan không? Thao tác này không thể hoàn tác.`}
+          confirmLabel="Xóa tài khoản"
+          busy={busy}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void userAction(deleteTarget.id, 'delete')}
+        />
+      )}
       {deleteTemplateTarget && (
         <ConfirmDialog title="Xóa mẫu video?"
           message={`Bạn có chắc chắn muốn xóa mẫu “${deleteTemplateTarget.name}” không? Thao tác này không thể hoàn tác.`}
