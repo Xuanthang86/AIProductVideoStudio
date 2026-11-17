@@ -216,6 +216,10 @@ export default function StudioPage({
     }
   }, [initialTemplate, maxAllowedDuration]);
 
+  useEffect(() => {
+    if (initialVideoType && !initialTemplate) setVideoType(initialVideoType);
+  }, [initialVideoType, initialTemplate]);
+
   // Preload images for canvas preview
   useEffect(() => {
     for (const s of scenes) {
