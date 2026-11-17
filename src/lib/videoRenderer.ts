@@ -6,8 +6,15 @@ export type RenderResolution = '480p' | '720p' | '1080p';
 export interface VoiceoverTrack {
   audioBuffer: AudioBuffer;
   startSec: number;
+  maxDurationSec?: number;
   volume?: number;
   playbackRate?: number;
+}
+
+export function getSceneDurationSec(durationSec?: number): number {
+  const n = Number(durationSec);
+  if (!Number.isFinite(n) || n <= 0) return 5;
+  return Math.min(30, Math.max(1, n));
 }
 
 export interface RenderResult {
@@ -67,12 +74,26 @@ export function checkDeviceRenderSafety(resolution: RenderResolution, durationSe
   return { isMobile, deviceMemoryGb, webCodecsSupported, recommendedResolution, warning };
 }
 
+function loadSingleImage(src: string, useAnonymousCors: boolean): Promise<HTMLImageElement | null> {
+  return new Promise(resolve => {
+    const img = new Image();
+    if (useAnonymousCors) img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
 async function loadImageElement(url: string): Promise<HTMLImageElement | null> {
   if (!url) return null;
-  return new Promise(resolve => {
-    const img = new Image(); img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img); img.onerror = () => resolve(null); img.src = url;
-  });
+  const isInline = url.startsWith('data:') || url.startsWith('blob:');
+  const loaded = await loadSingleImage(url, !isInline);
+  if (loaded) return loaded;
+  if (!isInline && /^https?:\/\//i.test(url)) {
+    const sep = url.includes('?') ? '&' : '?';
+    return loadSingleImage(`${url}${sep}_cors=1`, true);
+  }
+  return null;
 }
 
 async function loadVideoElement(url: string): Promise<HTMLVideoElement | null> {
@@ -351,14 +372,28 @@ async function synthesizeMusicTrack(
   const offline = new OfflineAudioContext(2, frameCount, sampleRate);
   for (const clip of voiceovers) {
     if (!clip.audioBuffer || clip.startSec >= totalDurationSec) continue;
+    const rate = Math.min(1.5, Math.max(0.7, clip.playbackRate ?? 1));
+    const startAt = Math.max(0, clip.startSec);
+    const availableWindow = clip.maxDurationSec && clip.maxDurationSec > 0
+      ? Math.min(clip.maxDurationSec, totalDurationSec - startAt)
+      : totalDurationSec - startAt;
+    if (availableWindow <= 0.05) continue;
+    const naturalDur = clip.audioBuffer.duration / rate;
+    const playDur = Math.min(naturalDur, availableWindow);
+    const targetVolume = Math.min(1.5, Math.max(0, clip.volume ?? 1));
     const source = offline.createBufferSource();
     source.buffer = clip.audioBuffer;
-    source.playbackRate.value = Math.min(1.5, Math.max(0.7, clip.playbackRate ?? 1));
+    source.playbackRate.value = rate;
     const gain = offline.createGain();
-    gain.gain.value = Math.min(1.5, Math.max(0, clip.volume ?? 1));
+    gain.gain.setValueAtTime(targetVolume, startAt);
+    if (naturalDur > availableWindow && playDur > 0.08) {
+      gain.gain.setValueAtTime(targetVolume, Math.max(startAt, startAt + playDur - 0.05));
+      gain.gain.linearRampToValueAtTime(0, startAt + playDur);
+    }
     source.connect(gain);
     gain.connect(offline.destination);
-    source.start(Math.max(0, clip.startSec));
+    source.start(startAt);
+    source.stop(startAt + playDur);
   }
   if (!music.enabled || music.volume <= 0) return offline.startRendering();
   const master = offline.createGain();
@@ -433,11 +468,17 @@ export async function renderProjectVideo(options: {
 
   const { width, height } = getResolutionDimensions(aspectRatio, resolution);
   const fps = 30;
-  const totalDurationSec = scenes.reduce((sum, s) => sum + Math.max(1, s.durationSec), 0);
+  const totalDurationSec = scenes.reduce((sum, s) => sum + getSceneDurationSec(s.durationSec), 0);
 
   onProgress(5, 'Đang tải hình ảnh sản phẩm...');
   const loadedImages = await Promise.all(scenes.map(s => s.aiVideoUrl ? loadVideoElement(s.aiVideoUrl) : loadImageElement(s.imageUrl)));
-  if (scenes.some((scene, index) => scene.aiVideoUrl && !loadedImages[index])) throw new Error('Không tải được một clip AI của dự án. Hãy kiểm tra lại liên kết video hoặc tạo lại phân cảnh.');
+  if (scenes.some((scene, index) => scene.aiVideoUrl && !loadedImages[index])) {
+    throw new Error('Không tải được một clip AI của dự án. Hãy kiểm tra lại liên kết video hoặc tạo lại phân cảnh.');
+  }
+  const missingImageIndex = scenes.findIndex((scene, index) => Boolean(scene.imageUrl) && !scene.aiVideoUrl && !loadedImages[index]);
+  if (missingImageIndex >= 0) {
+    throw new Error(`Không tải được hình ảnh của Phân cảnh ${missingImageIndex + 1}. Vui lòng tải lại ảnh hoặc kiểm tra kết nối.`);
+  }
 
   if (signal?.aborted) throw new Error('RENDER_CANCELLED');
 
@@ -452,6 +493,8 @@ export async function renderProjectVideo(options: {
   const webCodecsOk = !hasAiVideoScenes && typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
 
   if (webCodecsOk) {
+    let videoEncoder: VideoEncoder | null = null;
+    let audioEncoder: AudioEncoder | null = null;
     try {
       onProgress(12, 'Đang khởi tạo bộ mã hóa MP4 (H.264)...');
       const hasAudioEncoder = typeof AudioEncoder !== 'undefined' && typeof AudioData !== 'undefined';
@@ -466,7 +509,30 @@ export async function renderProjectVideo(options: {
         audioSupported = Boolean(support.supported);
       }
 
-      if (!audioSupported && (voiceovers.length > 0 || musicConfig.enabled)) throw new Error('Bộ mã hóa âm thanh AAC không được hỗ trợ; chuyển sang chế độ ghi hình tương thích.');
+      if (!audioSupported && (voiceovers.length > 0 || musicConfig.enabled)) {
+        throw new Error('Bộ mã hóa âm thanh AAC không được hỗ trợ; chuyển sang chế độ ghi hình tương thích.');
+      }
+
+      const targetBitrate = resolution === '1080p' ? 4_500_000 : resolution === '720p' ? 2_500_000 : 1_200_000;
+      const codecCandidates = ['avc1.4d002a', 'avc1.42001f', 'avc1.42E01E'];
+      let chosenCodec = '';
+      for (const c of codecCandidates) {
+        const cfg = await VideoEncoder.isConfigSupported({
+          codec: c,
+          width,
+          height,
+          bitrate: targetBitrate,
+          framerate: fps,
+        });
+        if (cfg.supported) {
+          chosenCodec = c;
+          break;
+        }
+      }
+      if (!chosenCodec) {
+        throw new Error('Trình duyệt chưa hỗ trợ mã hóa H.264 WebCodecs; chuyển sang chế độ ghi hình tương thích.');
+      }
+
       const target = new ArrayBufferTarget();
       const muxer = new Muxer({
         target,
@@ -485,45 +551,29 @@ export async function renderProjectVideo(options: {
         fastStart: 'in-memory',
       });
 
-      const videoEncoder = new VideoEncoder({
+      let encoderError: Error | null = null;
+      videoEncoder = new VideoEncoder({
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
         error: err => {
-          throw err;
+          encoderError = err instanceof Error ? err : new Error(String(err));
         },
       });
-
-      const codecCandidates = ['avc1.4d002a', 'avc1.42001f', 'avc1.42E01E'];
-      let chosenCodec = 'avc1.42001f';
-      for (const c of codecCandidates) {
-        const cfg = await VideoEncoder.isConfigSupported({
-          codec: c,
-          width,
-          height,
-          bitrate: resolution === '1080p' ? 4_500_000 : resolution === '720p' ? 2_500_000 : 1_200_000,
-          framerate: fps,
-        });
-        if (cfg.supported) {
-          chosenCodec = c;
-          break;
-        }
-      }
 
       videoEncoder.configure({
         codec: chosenCodec,
         width,
         height,
-        bitrate: resolution === '1080p' ? 4_500_000 : resolution === '720p' ? 2_500_000 : 1_200_000,
+        bitrate: targetBitrate,
         framerate: fps,
       });
 
       if (audioSupported) {
-        onProgress(18, 'Đang tổng hợp âm thanh nền...');
         onProgress(18, voiceovers.length ? 'Đang phối giọng đọc và nhạc nền...' : 'Đang tổng hợp âm thanh nền...');
         const audioBuffer = await synthesizeMusicTrack(totalDurationSec, musicConfig, 44100, voiceovers);
-        const audioEncoder = new AudioEncoder({
+        audioEncoder = new AudioEncoder({
           output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
           error: err => {
-            throw err;
+            encoderError = err instanceof Error ? err : new Error(String(err));
           },
         });
         audioEncoder.configure({
@@ -537,6 +587,8 @@ export async function renderProjectVideo(options: {
         const ch1 = audioBuffer.getChannelData(1);
         const chunkFrames = 4410; // 100ms chunks
         for (let offset = 0; offset < audioBuffer.length; offset += chunkFrames) {
+          if (encoderError) throw encoderError;
+          if (signal?.aborted) throw new Error('RENDER_CANCELLED');
           const frames = Math.min(chunkFrames, audioBuffer.length - offset);
           const planar = new Float32Array(frames * 2);
           planar.set(ch0.subarray(offset, offset + frames), 0);
@@ -553,7 +605,9 @@ export async function renderProjectVideo(options: {
           audioData.close();
         }
         await audioEncoder.flush();
+        if (encoderError) throw encoderError;
         audioEncoder.close();
+        audioEncoder = null;
       }
 
       const totalFrames = Math.ceil(totalDurationSec * fps);
@@ -561,18 +615,17 @@ export async function renderProjectVideo(options: {
       let sceneStartSec = 0;
 
       for (let frameIdx = 0; frameIdx < totalFrames; frameIdx++) {
-        if (signal?.aborted) {
-          videoEncoder.close();
-          throw new Error('RENDER_CANCELLED');
-        }
+        if (encoderError) throw encoderError;
+        if (signal?.aborted) throw new Error('RENDER_CANCELLED');
 
         const timeSec = frameIdx / fps;
-        while (sceneIdx < scenes.length - 1 && timeSec >= sceneStartSec + scenes[sceneIdx].durationSec) {
-          sceneStartSec += scenes[sceneIdx].durationSec;
+        while (sceneIdx < scenes.length - 1 && timeSec >= sceneStartSec + getSceneDurationSec(scenes[sceneIdx].durationSec)) {
+          sceneStartSec += getSceneDurationSec(scenes[sceneIdx].durationSec);
           sceneIdx++;
         }
         const currentScene = scenes[sceneIdx];
-        const sceneProgress = (timeSec - sceneStartSec) / Math.max(0.1, currentScene.durationSec);
+        const currentDur = getSceneDurationSec(currentScene.durationSec);
+        const sceneProgress = (timeSec - sceneStartSec) / currentDur;
 
         drawSceneFrame(ctx, width, height, {
           scene: currentScene,
@@ -584,6 +637,11 @@ export async function renderProjectVideo(options: {
           ctaText,
         });
 
+        while (videoEncoder.encodeQueueSize > 8 && !encoderError && !signal?.aborted) {
+          await new Promise(r => setTimeout(r, 8));
+        }
+        if (encoderError) throw encoderError;
+
         const timestampUs = Math.round((frameIdx / fps) * 1_000_000);
         const frame = new VideoFrame(canvas, { timestamp: timestampUs, duration: Math.round(1_000_000 / fps) });
         videoEncoder.encode(frame, { keyFrame: frameIdx % (fps * 2) === 0 });
@@ -592,14 +650,16 @@ export async function renderProjectVideo(options: {
         if (frameIdx % 10 === 0) {
           const pct = Math.min(95, 20 + Math.round((frameIdx / totalFrames) * 75));
           onProgress(pct, `Đang dựng khung hình ${frameIdx + 1}/${totalFrames}...`);
-          // Yield to browser UI thread so page remains responsive and cancel works
           await new Promise(r => setTimeout(r, 0));
         }
       }
 
+      if (encoderError) throw encoderError;
       onProgress(97, 'Đang đóng gói file MP4...');
       await videoEncoder.flush();
+      if (encoderError) throw encoderError;
       videoEncoder.close();
+      videoEncoder = null;
       muxer.finalize();
 
       const blob = new Blob([target.buffer], { type: 'video/mp4' });
@@ -616,6 +676,9 @@ export async function renderProjectVideo(options: {
     } catch (err) {
       if (err instanceof Error && err.message === 'RENDER_CANCELLED') throw err;
       console.warn('WebCodecs MP4 encoder fallback to MediaRecorder:', err);
+    } finally {
+      try { if (audioEncoder && audioEncoder.state !== 'closed') audioEncoder.close(); } catch { /* ignore */ }
+      try { if (videoEncoder && videoEncoder.state !== 'closed') videoEncoder.close(); } catch { /* ignore */ }
     }
   }
 
@@ -627,102 +690,120 @@ export async function renderProjectVideo(options: {
   onProgress(20, 'Đang chuyển sang chế độ ghi hình MediaRecorder...');
   const stream = canvas.captureStream(fps);
   let audioContext: AudioContext | null = null;
-  if (voiceovers.length > 0 || musicConfig.enabled) {
-    if (typeof AudioContext === 'undefined') {
-      if (voiceovers.length > 0) throw new Error('Trình duyệt không hỗ trợ phối giọng đọc vào video.');
-    } else {
-      audioContext = new AudioContext();
-      const mixedAudio = await synthesizeMusicTrack(totalDurationSec, musicConfig, 44100, voiceovers);
-      const source = audioContext.createBufferSource();
-      source.buffer = mixedAudio;
-      const destination = audioContext.createMediaStreamDestination();
-      source.connect(destination);
-      destination.stream.getAudioTracks().forEach(track => stream.addTrack(track));
-      await audioContext.resume();
-      source.start();
+  try {
+    if (voiceovers.length > 0 || musicConfig.enabled) {
+      if (typeof AudioContext === 'undefined') {
+        if (voiceovers.length > 0) throw new Error('Trình duyệt không hỗ trợ phối giọng đọc vào video.');
+      } else {
+        audioContext = new AudioContext();
+        const mixedAudio = await synthesizeMusicTrack(totalDurationSec, musicConfig, 44100, voiceovers);
+        const source = audioContext.createBufferSource();
+        source.buffer = mixedAudio;
+        const destination = audioContext.createMediaStreamDestination();
+        source.connect(destination);
+        destination.stream.getAudioTracks().forEach(track => stream.addTrack(track));
+        await audioContext.resume();
+        source.start();
+      }
     }
-  }
-  const hasAudioTrack = stream.getAudioTracks().length > 0;
-  const mimeType = hasAudioTrack && MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-    ? 'video/webm;codecs=vp9,opus'
-    : MediaRecorder.isTypeSupported('video/mp4')
-      ? 'video/mp4'
-      : MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm';
-
-  const recorder = new MediaRecorder(stream, { mimeType });
-  const chunks: BlobPart[] = [];
-  recorder.ondataavailable = e => {
-    if (e.data.size > 0) chunks.push(e.data);
-  };
-
-  const stopped = new Promise<Blob>(resolve => {
-    recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
-  });
-
-  recorder.start(250);
-  const startTime = performance.now();
-
-  await new Promise<void>((resolve, reject) => {
-    const tick = () => {
-      if (signal?.aborted) {
-        recorder.stop();
-        reject(new Error('RENDER_CANCELLED'));
-        return;
+    const hasAudioTrack = stream.getAudioTracks().length > 0;
+    const candidates = hasAudioTrack
+      ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm']
+      : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/mp4', 'video/webm'];
+    const supportedMime = candidates.find(type => {
+      try {
+        return MediaRecorder.isTypeSupported(type);
+      } catch {
+        return false;
       }
-      const elapsed = (performance.now() - startTime) / 1000;
-      if (elapsed >= totalDurationSec) {
-        resolve();
-        return;
-      }
-      let acc = 0;
-      let idx = 0;
-      for (let i = 0; i < scenes.length; i++) {
-        if (elapsed < acc + scenes[i].durationSec || i === scenes.length - 1) {
-          idx = i;
-          break;
-        }
-        acc += scenes[i].durationSec;
-      }
-      const activeMedia = loadedImages[idx];
-      loadedImages.forEach(media => { if (media instanceof HTMLVideoElement && media !== activeMedia && !media.paused) media.pause(); });
-      if (activeMedia instanceof HTMLVideoElement) {
-        const sceneElapsed = Math.max(0, elapsed - acc);
-        if (Number.isFinite(activeMedia.duration) && activeMedia.duration > 0 && activeMedia.readyState >= 2) {
-          const targetTime = sceneElapsed % activeMedia.duration;
-          if (Math.abs(activeMedia.currentTime - targetTime) > 0.4) activeMedia.currentTime = targetTime;
-        }
-        if (activeMedia.paused) activeMedia.play().catch(() => {});
-      }
-      drawSceneFrame(ctx, width, height, {
-        scene: scenes[idx],
-        image: activeMedia,
-        sceneProgress: (elapsed - acc) / Math.max(0.1, scenes[idx].durationSec),
-        sceneIndex: idx,
-        totalScenes: scenes.length,
-        productName: scenes[idx].productName || productName,
-        ctaText,
-      });
-      onProgress(Math.min(95, 20 + Math.round((elapsed / totalDurationSec) * 75)), 'Đang ghi video...');
-      requestAnimationFrame(tick);
+    }) || '';
+
+    const recorder = supportedMime ? new MediaRecorder(stream, { mimeType: supportedMime }) : new MediaRecorder(stream);
+    const actualMime = recorder.mimeType || supportedMime || 'video/webm';
+    const chunks: BlobPart[] = [];
+    recorder.ondataavailable = e => {
+      if (e.data.size > 0) chunks.push(e.data);
     };
-    requestAnimationFrame(tick);
-  });
 
-  recorder.stop();
-  const blob = await stopped;
-  if (audioContext) await audioContext.close().catch(() => {});
-  loadedImages.forEach(media => { if (media instanceof HTMLVideoElement) { media.pause(); media.removeAttribute('src'); media.load(); } });
-  const format = mimeType.includes('mp4') ? 'mp4' : 'webm';
-  onProgress(100, 'Hoàn tất dựng video!');
-  return {
-    blob,
-    format,
-    mimeType,
-    fileSizeBytes: blob.size,
-    width,
-    height,
-    durationSec: totalDurationSec,
-  };
+    const stopped = new Promise<Blob>(resolve => {
+      recorder.onstop = () => resolve(new Blob(chunks, { type: actualMime }));
+    });
+
+    recorder.start(250);
+    const startTime = performance.now();
+
+    await new Promise<void>((resolve, reject) => {
+      const tick = () => {
+        if (signal?.aborted) {
+          if (recorder.state !== 'inactive') recorder.stop();
+          reject(new Error('RENDER_CANCELLED'));
+          return;
+        }
+        const elapsed = (performance.now() - startTime) / 1000;
+        if (elapsed >= totalDurationSec) {
+          resolve();
+          return;
+        }
+        let acc = 0;
+        let idx = 0;
+        for (let i = 0; i < scenes.length; i++) {
+          const dur = getSceneDurationSec(scenes[i].durationSec);
+          if (elapsed < acc + dur || i === scenes.length - 1) {
+            idx = i;
+            break;
+          }
+          acc += dur;
+        }
+        const activeMedia = loadedImages[idx];
+        loadedImages.forEach(media => {
+          if (media instanceof HTMLVideoElement && media !== activeMedia && !media.paused) media.pause();
+        });
+        if (activeMedia instanceof HTMLVideoElement) {
+          const sceneElapsed = Math.max(0, elapsed - acc);
+          if (Number.isFinite(activeMedia.duration) && activeMedia.duration > 0 && activeMedia.readyState >= 2) {
+            const targetTime = sceneElapsed % activeMedia.duration;
+            if (Math.abs(activeMedia.currentTime - targetTime) > 0.4) activeMedia.currentTime = targetTime;
+          }
+          if (activeMedia.paused) activeMedia.play().catch(() => {});
+        }
+        const currentDur = getSceneDurationSec(scenes[idx].durationSec);
+        drawSceneFrame(ctx, width, height, {
+          scene: scenes[idx],
+          image: activeMedia,
+          sceneProgress: (elapsed - acc) / currentDur,
+          sceneIndex: idx,
+          totalScenes: scenes.length,
+          productName: scenes[idx].productName || productName,
+          ctaText,
+        });
+        onProgress(Math.min(95, 20 + Math.round((elapsed / totalDurationSec) * 75)), 'Đang ghi video...');
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+
+    if (recorder.state !== 'inactive') recorder.stop();
+    const blob = await stopped;
+    const format = actualMime.includes('mp4') ? 'mp4' : 'webm';
+    onProgress(100, 'Hoàn tất dựng video!');
+    return {
+      blob,
+      format,
+      mimeType: actualMime,
+      fileSizeBytes: blob.size,
+      width,
+      height,
+      durationSec: totalDurationSec,
+    };
+  } finally {
+    stream.getTracks().forEach(track => { try { track.stop(); } catch { /* ignore */ } });
+    if (audioContext) await audioContext.close().catch(() => {});
+    loadedImages.forEach(media => {
+      if (media instanceof HTMLVideoElement) {
+        media.pause();
+        media.removeAttribute('src');
+        media.load();
+      }
+    });
+  }
 }

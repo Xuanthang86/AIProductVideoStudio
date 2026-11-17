@@ -510,9 +510,11 @@ function buildStructuredFreeScripts(input: {
 }
 
 function normalizeSceneDurations(rawScenes: Array<Record<string, unknown>>, targetTotalSec: number) {
-  const sourceScenes = rawScenes.slice(0, 12);
+  const minPerScene = 2;
+  const maxAllowedCount = Math.max(1, Math.min(12, Math.floor(Math.max(minPerScene, targetTotalSec) / minPerScene)));
+  const sourceScenes = rawScenes.slice(0, maxAllowedCount);
   const count = sourceScenes.length;
-  const safeTotal = Math.max(count, targetTotalSec);
+  const safeTotal = Math.max(count * minPerScene, targetTotalSec);
   const weights = sourceScenes.map(scene => {
     const value = Number(scene.durationSec);
     return Number.isFinite(value) && value > 0 ? value : 1;
@@ -523,11 +525,11 @@ function normalizeSceneDurations(rawScenes: Array<Record<string, unknown>>, targ
   for (let i = 0; i < count; i++) {
     const scenesLeftAfterThis = count - 1 - i;
     if (i === count - 1) {
-      durations.push(Number(Math.max(1, remaining).toFixed(1)));
+      durations.push(Number(Math.max(minPerScene, remaining).toFixed(1)));
     } else {
       const ideal = Number(((safeTotal * weights[i]) / weightTotal).toFixed(1));
-      const maxAllowedForThis = Number((remaining - scenesLeftAfterThis).toFixed(1));
-      const clamped = Math.max(1, Math.min(ideal, maxAllowedForThis));
+      const maxAllowedForThis = Number((remaining - scenesLeftAfterThis * minPerScene).toFixed(1));
+      const clamped = Math.max(minPerScene, Math.min(ideal, maxAllowedForThis));
       durations.push(Number(clamped.toFixed(1)));
       remaining = Number((remaining - clamped).toFixed(1));
     }
@@ -636,13 +638,14 @@ async function generateScriptsWithGeminiApi(input: {
 async function uploadToImageKit(
   env: Env,
   fileName: string,
-  base64Data: string
+  base64Data: string,
+  folder = '/ai-product-video-studio/products'
 ): Promise<{ url: string; fileId: string } | null> {
   if (!env.IMAGEKIT_PRIVATE_KEY || !env.IMAGEKIT_URL_ENDPOINT) return null;
   const form = new FormData();
   form.append('file', base64Data);
   form.append('fileName', fileName);
-  form.append('folder', '/ai-product-video-studio/products');
+  form.append('folder', folder);
   const auth = btoa(`${env.IMAGEKIT_PRIVATE_KEY}:`);
   const resp = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
     method: 'POST',
@@ -941,6 +944,104 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         200,
         { 'set-cookie': cookieHeader(session.token, session.maxAge, isHttpsRequest(request), isIframeRequest(request)) }
       );
+    }
+
+    // Upload standalone scene image (no product required; uses ImageKit when configured, or D1 fallback)
+    if (path === '/api/media/scene-image' && request.method === 'POST') {
+      const data = await body(request);
+      const fileName = str(data.fileName) || 'scene-image.jpg';
+      const rawMime = str(data.mimeType).toLowerCase();
+      const fileExt = fileName.toLowerCase().split('.').pop() || '';
+      const extToMime: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+      const mimeType = rawMime === 'image/jpg'
+        ? 'image/jpeg'
+        : ['image/jpeg', 'image/png', 'image/webp'].includes(rawMime)
+          ? rawMime
+          : (!rawMime || rawMime === 'application/octet-stream' || rawMime === 'image/*' ? (extToMime[fileExt] || '') : rawMime);
+      const base64Raw = str(data.base64);
+      const width = num(data.width, 0) || null;
+      const height = num(data.height, 0) || null;
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+        return fail('Chỉ hỗ trợ ảnh định dạng JPG, JPEG, PNG hoặc WEBP.');
+      }
+      const cleanBase64 = base64Raw.includes(',') ? base64Raw.split(',')[1] : base64Raw;
+      if (!cleanBase64) return fail('Dữ liệu ảnh không hợp lệ.');
+      const approxBytes = Math.floor((cleanBase64.length * 3) / 4);
+      if (approxBytes <= 0 || approxBytes > 5 * 1024 * 1024) {
+        return fail('Dung lượng ảnh vượt quá giới hạn 5MB.');
+      }
+
+      const imgId = uuid();
+      let storageProvider = 'd1-inline';
+      let imageUrl = `/api/media/scene/${imgId}`;
+
+      if (env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT) {
+        try {
+          const uploaded = await uploadToImageKit(
+            env,
+            `${imgId}-${fileName}`,
+            `data:${mimeType};base64,${cleanBase64}`,
+            '/ai-product-video-studio/scenes'
+          );
+          if (uploaded) {
+            storageProvider = 'imagekit';
+            imageUrl = uploaded.url;
+          }
+        } catch (err) {
+          console.warn('ImageKit standalone scene upload fallback to internal storage:', err);
+        }
+      }
+
+      if (storageProvider === 'd1-inline') {
+        const now = new Date().toISOString();
+        await env.DB.prepare('INSERT OR REPLACE INTO system_settings(key,value_json,updated_at) VALUES(?,?,?)')
+          .bind(
+            `scene_media:${imgId}`,
+            JSON.stringify({ userId: actor.id, fileName, mimeType, dataBase64: cleanBase64, sizeBytes: approxBytes, width, height, createdAt: now }),
+            now
+          )
+          .run();
+      }
+
+      return json(
+        {
+          image: {
+            id: null,
+            productId: null,
+            fileName,
+            mimeType,
+            sizeBytes: approxBytes,
+            width,
+            height,
+            storageProvider,
+            imageUrl,
+          },
+        },
+        201
+      );
+    }
+
+    const sceneMediaMatch = path.match(/^\/api\/media\/scene\/([0-9a-f-]+)$/);
+    if (sceneMediaMatch && request.method === 'GET') {
+      const mediaId = sceneMediaMatch[1];
+      const row = await env.DB.prepare('SELECT value_json FROM system_settings WHERE key=?')
+        .bind(`scene_media:${mediaId}`)
+        .first<{ value_json: string }>();
+      const stored = safeJsonParse<{ userId?: string; mimeType?: string; dataBase64?: string } | null>(row?.value_json, null);
+      if (!stored || !stored.dataBase64) return fail('Không tìm thấy hình ảnh phân cảnh.', 404);
+      if (stored.userId !== actor.id && roleRank(actor.role) < roleRank('ADMIN')) {
+        return fail('Bạn không có quyền truy cập hình ảnh này.', 403);
+      }
+      const binStr = atob(stored.dataBase64);
+      const bytesArr = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytesArr[i] = binStr.charCodeAt(i);
+      return new Response(bytesArr, {
+        status: 200,
+        headers: {
+          'content-type': stored.mimeType || 'image/jpeg',
+          'cache-control': 'private, max-age=3600',
+        },
+      });
     }
 
     // Serve stored product image (protected by ownership or admin)
@@ -1358,42 +1459,52 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (path === '/api/ai/generate-script' && request.method === 'POST') {
       const data = await body(request);
       const productId = str(data.productId);
-      if (!productId) return fail('Vui lòng chọn sản phẩm trước khi tạo kịch bản.', 400);
+      const standaloneTitle = str(data.title);
+      const standaloneIndustry = str(data.industry) || 'Mỹ phẩm';
+      const standaloneDescription = str(data.description);
       const videoType = str(data.videoType) || 'Advertisement';
       const targetAudience = str(data.targetAudience) || '';
       const style = str(data.style) || 'Hiện đại, chuyên nghiệp';
       const durationSec = Math.min(90, Math.max(15, num(data.durationSec, 30)));
       const language = str(data.language) === 'en' ? 'en' : 'vi';
 
-      const product = await env.DB.prepare('SELECT * FROM products WHERE id=? AND user_id=?')
-        .bind(productId, actor.id)
-        .first<Record<string, unknown>>();
-      if (!product) return fail('Không tìm thấy sản phẩm.', 404);
+      if (!productId && !standaloneTitle) {
+        return fail('Vui lòng chọn sản phẩm hoặc nhập tiêu đề dự án trước khi tạo kịch bản.', 400);
+      }
+
+      let product: Record<string, unknown> | null = null;
+      let imageCount = 0;
+      if (productId) {
+        product = await env.DB.prepare('SELECT * FROM products WHERE id=? AND user_id=?')
+          .bind(productId, actor.id)
+          .first<Record<string, unknown>>();
+        if (!product) return fail('Không tìm thấy sản phẩm.', 404);
+        const countRow = await env.DB.prepare('SELECT COUNT(*) AS count FROM product_images WHERE product_id=?')
+          .bind(productId)
+          .first<{ count: number }>();
+        imageCount = countRow?.count || 0;
+      }
 
       const quota = await getOrCreateQuota(env, actor.id);
       if (durationSec > quota.max_duration_sec) {
         return fail(`Thời lượng tối đa theo hạn mức tài khoản của bạn là ${quota.max_duration_sec} giây.`);
       }
 
-      const countRow = await env.DB.prepare('SELECT COUNT(*) AS count FROM product_images WHERE product_id=?')
-        .bind(productId)
-        .first<{ count: number }>();
-
-      const highlights = safeJsonParse<string[]>(String(product.highlights_json || '[]'), []);
+      const highlights = product ? safeJsonParse<string[]>(String(product.highlights_json || '[]'), []) : [];
       const modCfg = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='gemini_script'").first<AIConfigRow>();
 
       const inputPayload = {
-        productName: String(product.name),
-        brand: String(product.brand || ''),
-        industry: String(product.industry),
-        description: String(product.description || ''),
+        productName: product ? String(product.name) : standaloneTitle,
+        brand: product ? String(product.brand || '') : '',
+        industry: product ? String(product.industry) : standaloneIndustry,
+        description: product ? String(product.description || '') : (standaloneDescription || `${videoType} - ${style}`),
         highlights,
         videoType,
         targetAudience,
         style,
         durationSec,
         language,
-        imageCount: countRow?.count || 0,
+        imageCount,
       };
 
       let result: unknown;
@@ -1461,29 +1572,60 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const data = await body(request);
       const productId = str(data.productId);
       const imageId = str(data.imageId);
+      const directImageUrl = str(data.imageUrl);
+      const projectTitle = str(data.projectTitle);
+      const requestedIndustry = str(data.industry);
       const instruction = str(data.instruction);
       const scene = data.scene && typeof data.scene === 'object' ? data.scene as Record<string, unknown> : {};
-      if (!productId || !imageId) return fail('Thiếu sản phẩm hoặc ảnh phân cảnh.');
+      if (!imageId && !directImageUrl) return fail('Thiếu ảnh phân cảnh để phân tích.');
       if (instruction.length > 1200) return fail('Yêu cầu chỉnh sửa tối đa 1.200 ký tự.');
 
-      const product = await env.DB.prepare('SELECT name,brand,industry,description,highlights_json FROM products WHERE id=? AND user_id=?')
-        .bind(productId, actor.id).first<Record<string, unknown>>();
-      if (!product) return fail('Không tìm thấy sản phẩm.', 404);
-      const image = await env.DB.prepare('SELECT mime_type,data_base64,image_url FROM product_images WHERE id=? AND product_id=? AND user_id=?')
-        .bind(imageId, productId, actor.id).first<{ mime_type: string; data_base64: string | null; image_url: string }>();
-      if (!image) return fail('Không tìm thấy ảnh thuộc sản phẩm này.', 404);
+      let product: Record<string, unknown> | null = null;
+      if (productId) {
+        product = await env.DB.prepare('SELECT name,brand,industry,description,highlights_json FROM products WHERE id=? AND user_id=?')
+          .bind(productId, actor.id).first<Record<string, unknown>>();
+        if (!product) return fail('Không tìm thấy sản phẩm.', 404);
+      }
 
-      const mimeType = String(image.mime_type || '').toLowerCase();
-      if (!['image/jpeg','image/jpg','image/png','image/webp'].includes(mimeType)) return fail('Định dạng ảnh phân cảnh không được hỗ trợ.');
-      let imageBase64 = image.data_base64 || '';
-      if (!imageBase64 && image.image_url) {
-        const imageUrl = new URL(image.image_url, request.url);
+      let mimeType = '';
+      let imageBase64 = '';
+      let remoteImageUrl = '';
+
+      if (productId && imageId) {
+        const image = await env.DB.prepare('SELECT mime_type,data_base64,image_url FROM product_images WHERE id=? AND product_id=? AND user_id=?')
+          .bind(imageId, productId, actor.id).first<{ mime_type: string; data_base64: string | null; image_url: string }>();
+        if (!image) return fail('Không tìm thấy ảnh thuộc sản phẩm này.', 404);
+        mimeType = String(image.mime_type || '').toLowerCase();
+        imageBase64 = image.data_base64 || '';
+        remoteImageUrl = image.image_url || '';
+      } else if (directImageUrl) {
+        const sceneMediaMatch = directImageUrl.match(/^\/api\/media\/scene\/([0-9a-f-]+)(?:\?.*)?$/);
+        if (sceneMediaMatch) {
+          const mediaRow = await env.DB.prepare('SELECT value_json FROM system_settings WHERE key=?')
+            .bind(`scene_media:${sceneMediaMatch[1]}`)
+            .first<{ value_json: string }>();
+          const stored = safeJsonParse<{ userId?: string; mimeType?: string; dataBase64?: string } | null>(mediaRow?.value_json, null);
+          if (!stored || !stored.dataBase64) return fail('Không tìm thấy ảnh phân cảnh.', 404);
+          if (stored.userId !== actor.id && roleRank(actor.role) < roleRank('ADMIN')) {
+            return fail('Bạn không có quyền sử dụng ảnh phân cảnh này.', 403);
+          }
+          mimeType = String(stored.mimeType || 'image/jpeg').toLowerCase();
+          imageBase64 = stored.dataBase64;
+        } else {
+          remoteImageUrl = directImageUrl;
+        }
+      }
+
+      if (!imageBase64 && remoteImageUrl) {
+        const imageUrl = new URL(remoteImageUrl, request.url);
         const allowedHost = env.IMAGEKIT_URL_ENDPOINT ? new URL(env.IMAGEKIT_URL_ENDPOINT).hostname : '';
         if (!allowedHost || imageUrl.hostname !== allowedHost || imageUrl.protocol !== 'https:') {
           return fail('Không thể xác minh nguồn lưu trữ ảnh để phân tích an toàn.', 400);
         }
         const imageResponse = await fetch(imageUrl.toString());
         if (!imageResponse.ok) return fail('Không thể tải ảnh phân cảnh từ kho lưu trữ.', 502);
+        const respContentType = (imageResponse.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+        if (!mimeType && respContentType) mimeType = respContentType === 'image/jpg' ? 'image/jpeg' : respContentType;
         const imageBuffer = await imageResponse.arrayBuffer();
         if (imageBuffer.byteLength > 5 * 1024 * 1024) return fail('Ảnh phân cảnh vượt quá giới hạn 5MB.');
         const bytes = new Uint8Array(imageBuffer);
@@ -1493,6 +1635,11 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         }
         imageBase64 = btoa(binary);
       }
+
+      if (mimeType === 'image/jpg') mimeType = 'image/jpeg';
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+        return fail('Định dạng ảnh phân cảnh không được hỗ trợ.');
+      }
       if (!imageBase64) return fail('Ảnh phân cảnh chưa có dữ liệu để phân tích.');
 
       const config = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='gemini_script'").first<AIConfigRow>();
@@ -1501,12 +1648,18 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       if (!env.GEMINI_API_KEY) return fail('Chưa cấu hình Gemini API Key cho chức năng phân tích ảnh phân cảnh.', 503);
       if (!(await aiModuleWithinLimits(env, config))) return fail('Mô-đun Gemini đã đạt hạn mức ngày/tháng.', 429);
 
+      const subjectName = String(product?.name || projectTitle || 'Sản phẩm');
+      const subjectBrand = String(product?.brand || 'Chưa cung cấp');
+      const subjectIndustry = String(product?.industry || requestedIndustry || 'Mỹ phẩm');
+      const subjectDesc = String(product?.description || projectTitle || 'Chưa cung cấp');
+      const subjectHighlights = product ? safeJsonParse<string[]>(String(product.highlights_json || '[]'), []).join('; ') : '';
+
       const prompt = [
         'Bạn là đạo diễn nội dung video quảng cáo sản phẩm. Phân tích trực tiếp hình ảnh đính kèm và tạo hoặc chỉnh sửa đúng một phân cảnh.',
         'Chỉ mô tả những gì nhìn thấy trong ảnh; không tự suy diễn công dụng, thông số, chất liệu hoặc chứng nhận không thể xác minh.',
-        `Sản phẩm: ${String(product.name)}; thương hiệu: ${String(product.brand || 'Chưa cung cấp')}; ngành hàng: ${String(product.industry)}.`,
-        `Mô tả đã xác nhận: ${String(product.description || 'Chưa cung cấp')}.`,
-        `Điểm nổi bật do người dùng cung cấp: ${safeJsonParse<string[]>(String(product.highlights_json || '[]'), []).join('; ')}.`,
+        `Sản phẩm / chủ đề: ${subjectName}; thương hiệu: ${subjectBrand}; ngành hàng: ${subjectIndustry}.`,
+        `Mô tả đã xác nhận: ${subjectDesc}.`,
+        `Điểm nổi bật do người dùng cung cấp: ${subjectHighlights || 'Dựa trên hình ảnh đính kèm'}.`,
         `Nội dung cảnh hiện tại: ${JSON.stringify({ narration: str(scene.narration), onScreenText: str(scene.onScreenText), visualPrompt: str(scene.visualPrompt), durationSec: num(scene.durationSec, 5) })}.`,
         instruction ? `Yêu cầu chỉnh sửa của người dùng: ${instruction}` : 'Hãy phân tích ảnh và đề xuất lời thoại, chữ ngắn trên màn hình và hướng hình ảnh phù hợp với ảnh.',
         `Ngôn ngữ đầu ra: ${str(data.language) === 'en' ? 'English' : 'Tiếng Việt'}.`,
@@ -1741,7 +1894,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const industry = str(data.industry) || 'Mỹ phẩm';
       const targetAudience = str(data.targetAudience);
       const style = str(data.style) || 'Hiện đại, chuyên nghiệp';
-      const durationSec = Math.min(quota.max_duration_sec, Math.max(15, num(data.durationSec, 30)));
+      const scenes = Array.isArray(data.scenes) ? data.scenes : [];
+      const computedDuration = scenes.length > 0
+        ? Math.round(scenes.reduce((sum, raw) => {
+            const s = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+            return sum + Math.min(30, Math.max(2, num(s.durationSec, 5)));
+          }, 0))
+        : Math.min(quota.max_duration_sec, Math.max(2, num(data.durationSec, 30)));
+      if (scenes.length > 0 && computedDuration > quota.max_duration_sec) {
+        return fail(`Tổng thời lượng các phân cảnh (${computedDuration}s) vượt quá hạn mức tối đa ${quota.max_duration_sec}s của tài khoản. Vui lòng rút ngắn bớt thời lượng hoặc giảm phân cảnh.`, 400);
+      }
+      const durationSec = Math.min(quota.max_duration_sec, Math.max(2, computedDuration));
       const aspectRatio = ['9:16', '16:9', '1:1', '4:5'].includes(str(data.aspectRatio)) ? str(data.aspectRatio) : '9:16';
       const language = str(data.language) === 'en' ? 'en' : 'vi';
       const ctaText = str(data.ctaText) || 'Khám phá ngay';
@@ -1780,18 +1943,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         )
         .run();
 
-      const scenes = Array.isArray(data.scenes) ? data.scenes : [];
       for (let i = 0; i < scenes.length; i++) {
         const s = scenes[i] as Record<string, unknown>;
         await env.DB.prepare(
           'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
           .bind(
-            uuid(),
+            str(s.id) || uuid(),
             id,
             str(s.productId) || productId,
             i,
-            Math.max(2, num(s.durationSec, 5)),
+            Math.min(30, Math.max(2, num(s.durationSec, 5))),
             str(s.narration),
             str(s.onScreenText),
             s.showOnScreenText === false ? 0 : 1,
@@ -1902,7 +2064,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         const industry = str(data.industry) || String(project.industry);
         const targetAudience = data.targetAudience !== undefined ? str(data.targetAudience) : String(project.target_audience || '');
         const style = str(data.style) || String(project.style || '');
-        const durationSec = Math.min(quota.max_duration_sec, Math.max(15, num(data.durationSec, Number(project.duration_sec))));
+        const incomingScenes = Array.isArray(data.scenes) ? data.scenes : null;
+        const computedDuration = incomingScenes && incomingScenes.length > 0
+          ? Math.round(incomingScenes.reduce((sum, raw) => {
+              const s = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+              return sum + Math.min(30, Math.max(2, num(s.durationSec, 5)));
+            }, 0))
+          : Math.min(quota.max_duration_sec, Math.max(2, num(data.durationSec, Number(project.duration_sec))));
+        if (incomingScenes && incomingScenes.length > 0 && computedDuration > quota.max_duration_sec) {
+          return fail(`Tổng thời lượng các phân cảnh (${computedDuration}s) vượt quá hạn mức tối đa ${quota.max_duration_sec}s của tài khoản. Vui lòng rút ngắn bớt thời lượng hoặc giảm phân cảnh.`, 400);
+        }
+        const durationSec = Math.min(quota.max_duration_sec, Math.max(2, computedDuration));
         const aspectRatio = ['9:16', '16:9', '1:1', '4:5'].includes(str(data.aspectRatio))
           ? str(data.aspectRatio)
           : String(project.aspect_ratio);
@@ -1912,6 +2084,10 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         const voiceConfig = data.voiceConfig !== undefined ? JSON.stringify(data.voiceConfig) : String(project.voice_config_json || '{}');
         const musicConfig = data.musicConfig !== undefined ? JSON.stringify(data.musicConfig) : String(project.music_config_json || '{}');
         const productId = data.productId !== undefined ? str(data.productId) || null : (project.product_id as string | null);
+        if (productId) {
+          const prod = await env.DB.prepare('SELECT id FROM products WHERE id=? AND user_id=?').bind(productId, actor.id).first();
+          if (!prod) return fail('Sản phẩm không hợp lệ.', 404);
+        }
 
         await env.DB.prepare(
           'UPDATE video_projects SET product_id=?,title=?,video_type=?,industry=?,target_audience=?,style=?,duration_sec=?,aspect_ratio=?,language=?,voice_config_json=?,music_config_json=?,brand_logo_url=?,cta_text=?,updated_at=? WHERE id=? AND user_id=?'
@@ -1936,10 +2112,10 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           )
           .run();
 
-        if (Array.isArray(data.scenes)) {
+        if (incomingScenes) {
           await env.DB.prepare('DELETE FROM video_scenes WHERE project_id=?').bind(projectId).run();
-          for (let i = 0; i < data.scenes.length; i++) {
-            const s = data.scenes[i] as Record<string, unknown>;
+          for (let i = 0; i < incomingScenes.length; i++) {
+            const s = incomingScenes[i] as Record<string, unknown>;
             await env.DB.prepare(
               'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
             )
@@ -1948,7 +2124,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
                 projectId,
                 str(s.productId) || productId,
                 i,
-                Math.max(2, num(s.durationSec, 5)),
+                Math.min(30, Math.max(2, num(s.durationSec, 5))),
                 str(s.narration),
                 str(s.onScreenText),
                 s.showOnScreenText === false ? 0 : 1,

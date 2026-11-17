@@ -1,0 +1,993 @@
+# PROMPT: RÀ SOÁT, KHẮC PHỤC TOÀN DIỆN VÀ HOÀN THIỆN QUY TRÌNH TẠO VIDEO TRÊN AI PRODUCT VIDEO STUDIO
+
+## I. THÔNG TIN DỰ ÁN VÀ YÊU CẦU BẮT BUỘC
+
+**Repository:** `Xuanthang86/AIProductVideoStudio`
+
+**Nhánh làm việc:** `main`
+
+**Commit mới nhất đã được kiểm tra:** `62b4fb6aa0de515af1ffa07362d64872b0587a4d`
+
+**Website production:** `https://aivideo.xuanthang.io.vn`
+
+**Kiến trúc hiện tại:**
+- Frontend: React, TypeScript, Vite.
+- Backend: Cloudflare Workers.
+- Database: Cloudflare D1.
+- Lưu trữ hình ảnh và video: ImageKit.
+- Bộ dựng video: xử lý trực tiếp trên trình duyệt bằng Canvas, WebCodecs và MediaRecorder.
+- AI viết kịch bản, phân tích hình ảnh và tạo giọng đọc: Gemini theo cấu hình quản trị hiện tại.
+
+### 1. Yêu cầu quan trọng nhất
+
+Tôi yêu cầu bạn trực tiếp kiểm tra, sửa chữa và hoàn thiện các chức năng đang gặp lỗi. Không chỉ phân tích, đề xuất phương án hoặc viết hướng dẫn.
+
+Mục tiêu cuối cùng là người dùng có thể sử dụng thành công Không gian tạo & chỉnh sửa video để tạo ra một video hoàn chỉnh gồm nhiều phân cảnh, trong đó người dùng có thể chủ động cung cấp hình ảnh và nội dung riêng cho từng phân cảnh, chỉnh sửa, xem trước, ghép và xuất video.
+
+**NGUYÊN TẮC BẮT BUỘC: KHÔNG ĐƯỢC LÀM HỎNG CÁC NỘI DUNG, DỮ LIỆU VÀ CHỨC NĂNG ĐANG HOẠT ĐỘNG ỔN ĐỊNH.**
+
+Trước khi chỉnh sửa, phải đọc và hiểu cấu trúc hiện tại, xác định nguyên nhân gốc rễ của từng vấn đề, sau đó mới triển khai.
+
+Không được sửa một lỗi bằng cách tạo thêm nhiều lớp xử lý tạm thời, vô hiệu hóa chức năng hoặc làm phát sinh lỗi ở những chức năng khác.
+
+---
+
+# II. KIỂM TRA TOÀN BỘ MÃ NGUỒN TRƯỚC KHI CHỈNH SỬA
+
+Trước tiên, đồng bộ và kiểm tra trạng thái mới nhất của GitHub:
+
+1. Đọc repository `Xuanthang86/AIProductVideoStudio`.
+2. Kiểm tra nhánh `main` và commit mới nhất tại thời điểm bắt đầu.
+3. Đọc toàn bộ các tệp có liên quan đến quy trình tạo, chỉnh sửa, lưu trữ, dựng và xuất video.
+4. Kiểm tra các thay đổi ở những commit gần đây, đặc biệt các nội dung liên quan đến:
+   - AI viết kịch bản.
+   - Tải ảnh riêng cho từng phân cảnh.
+   - Hiển thị bản xem trước.
+   - Xác nhận xóa.
+   - Dựng video riêng cho từng phân cảnh.
+   - Xác nhận phân cảnh.
+   - Ghép và xuất video hoàn chỉnh.
+   - Giao diện trên thiết bị di động.
+
+Các tệp và khu vực cần ưu tiên rà soát:
+
+**Frontend**
+- `src/components/StudioPage.tsx`
+- `src/components/ProductsPage.tsx`
+- `src/components/MyVideosPage.tsx`
+- `src/components/ConfirmDialog.tsx`
+- `src/App.tsx`
+- `src/lib/api.ts`
+- `src/lib/videoRenderer.ts`
+- `src/types.ts`
+- `src/styles.css`
+
+**Backend**
+- `worker/index.ts`
+- Các hàm xử lý Gemini.
+- Các API tạo, cập nhật, đọc và xóa dự án.
+- Các API tạo và cập nhật phân cảnh.
+- Các API tải ảnh và lưu trữ media.
+- Các API dựng, lưu, kiểm duyệt và xuất video.
+- Các API quản lý hạn mức và ghi nhận lịch sử sử dụng AI.
+
+**Database và cấu hình**
+- Các migration trong `migrations/`.
+- `wrangler.toml`.
+- `package.json`.
+- Các GitHub Actions workflow hiện có.
+
+Không được chỉ đọc một vài hàm rồi kết luận nguyên nhân.
+
+Phải truy vết toàn bộ luồng dữ liệu từ thao tác của người dùng → React state → API → Cloudflare Worker → D1/ImageKit → phản hồi về giao diện.
+
+Sau khi rà soát, xác định rõ nguyên nhân khiến từng chức năng không hoạt động và phương án xử lý tương ứng.
+
+---
+
+# III. KHẮC PHỤC NÚT AI VIẾT KỊCH BẢN
+
+Hiện tại, nút **AI Viết kịch bản** đang hiển thị sáng nhưng khi nhấn không thực hiện được chức năng như mong muốn.
+
+Yêu cầu xử lý dứt điểm.
+
+### 1. Kiểm tra toàn bộ quy trình
+
+Rà soát:
+
+- Trạng thái tải danh sách sản phẩm.
+- Giá trị `productId`.
+- Dữ liệu `selectedProduct`.
+- Trạng thái tải ảnh và thông tin sản phẩm.
+- Hàm `generateScripts()` trong `StudioPage.tsx`.
+- API `/api/ai/generate-script`.
+- Cấu hình `ai_configs`.
+- Module `gemini_script`.
+- Secret `GEMINI_API_KEY`.
+- Tên model Gemini đang được cấu hình.
+- Hạn mức ngày/tháng.
+- Quyền sử dụng AI của tài khoản.
+- Hàm `buildStructuredFreeScripts()`.
+- Hàm gọi Gemini thực tế.
+- Cấu trúc dữ liệu `ScriptVariant` và `VideoScene`.
+- Quá trình nhận kết quả và hiển thị các phương án kịch bản.
+
+### 2. Khắc phục trạng thái nút
+
+Nút phải có trạng thái rõ ràng:
+
+- Đang tải dữ liệu: không cho thực hiện khi dữ liệu bắt buộc chưa sẵn sàng.
+- Chưa có sản phẩm: hiển thị hướng dẫn phù hợp, không để nút sáng nhưng nhấn không có tác dụng.
+- Đang tạo kịch bản: hiển thị trạng thái xử lý và ngăn nhấn nhiều lần.
+- Tạo thành công: hiển thị các phương án kịch bản.
+- Tạo thất bại: hiển thị nguyên nhân cụ thể và hướng xử lý.
+
+Không được để hàm kết thúc âm thầm khi thiếu dữ liệu.
+
+### 3. Hoàn thiện kết quả kịch bản
+
+Khi tạo thành công, hệ thống phải:
+
+- Trả về các phương án kịch bản hợp lệ.
+- Mỗi phương án có nhiều phân cảnh.
+- Có lời thoại/nội dung cho từng phân cảnh.
+- Có chữ hiển thị trên video.
+- Có thời lượng phù hợp.
+- Có gợi ý chuyển động và hiệu ứng.
+- Có thể chọn phương án khác nhau.
+- Có thể chỉnh sửa nội dung từng phân cảnh.
+- Có thể bổ sung, xóa và sắp xếp lại phân cảnh.
+
+Tổng thời lượng các phân cảnh phải phù hợp với thời lượng video đã lựa chọn.
+
+Không được để thời lượng tổng bị sai do làm tròn hoặc do xử lý số giây tối thiểu không thống nhất giữa frontend và backend.
+
+### 4. Cơ chế dự phòng
+
+Nếu Gemini không khả dụng, hệ thống được phép sử dụng cơ chế tạo kịch bản cấu trúc miễn phí hiện có.
+
+Tuy nhiên:
+- Phải thông báo rõ đang sử dụng Gemini hay chế độ dự phòng.
+- Không được thông báo đã tạo bằng Gemini khi thực tế chỉ sử dụng dữ liệu dự phòng.
+- Không tự suy diễn công dụng, thông số hoặc đặc điểm sản phẩm.
+- Không bỏ qua cấu hình bật/tắt module AI.
+- Không bỏ qua hạn mức sử dụng.
+- Không bỏ qua quyền tài khoản.
+- Không làm sai lệch lịch sử sử dụng AI.
+
+Nếu API lỗi, phải xác định lỗi thực tế thay vì chỉ bổ sung thêm một lớp fallback để che lỗi.
+
+---
+
+# IV. KHẮC PHỤC DỨT ĐIỂM CHỨC NĂNG TẢI ẢNH RIÊNG CHO TỪNG PHÂN CẢNH
+
+Đây là lỗi đang ảnh hưởng trực tiếp đến việc tạo video.
+
+Hiện tại, khu vực **Tải ảnh riêng cho cảnh** không hoạt động ổn định, khiến người dùng không thể chọn ảnh và tạo bản xem trước theo nội dung mong muốn.
+
+### 1. Xử lý bộ chọn tệp
+
+Kiểm tra kỹ cấu trúc HTML và CSS trong `StudioPage.tsx`, `styles.css`.
+
+Đặc biệt lưu ý:
+
+Trong CSS hiện có các quy tắc thiết lập `.scene-image-file-input` hiển thị trực tiếp, nhưng ở phần CSS bổ sung phía sau lại có quy tắc ẩn input bằng cách thu nhỏ còn 1px, đặt `clip: rect(...)` và sử dụng nút riêng gọi:
+
+`sceneImageInputRefs.current[idx]?.click()`
+
+Đây là điểm xung đột cần xử lý.
+
+Không tiếp tục chồng thêm các quy tắc CSS để sửa tạm.
+
+**Yêu cầu:**
+- Ưu tiên sử dụng input file native hiển thị trực tiếp.
+- Người dùng có thể nhấn nút chọn tệp và mở thư viện ảnh.
+- Có thể chọn ảnh từ thư viện, ứng dụng Tệp hoặc nguồn ảnh mà trình duyệt hỗ trợ.
+- Không phụ thuộc vào một input bị ẩn và một nút JavaScript gọi `.click()` nếu điều đó gây lỗi trên thiết bị di động.
+- Không để lớp giao diện khác che khuất vùng chọn tệp.
+- Không để `disabled` sai khiến người dùng không thể chọn ảnh.
+- Khi đang tải ảnh, hiển thị trạng thái và ngăn gửi nhiều lần.
+
+Kiểm tra tương thích:
+- Safari trên iPhone.
+- Trình duyệt Google trên iPhone.
+- Chrome trên Android.
+- Chrome và Edge trên máy tính.
+
+### 2. Không bắt buộc người dùng phải tạo sản phẩm trước khi tạo từng phân cảnh
+
+Đây là yêu cầu quan trọng cần hoàn thiện.
+
+Hiện tại, chức năng tải ảnh riêng cho phân cảnh đang phụ thuộc vào `sceneProductId` hoặc `productId`.
+
+Tôi muốn hệ thống hỗ trợ hai cách sử dụng:
+
+**Cách 1: Tạo video từ sản phẩm có sẵn**
+- Chọn sản phẩm trong Quản lý sản phẩm.
+- Sử dụng ảnh đã tải lên.
+- Chọn ảnh khác nhau cho từng phân cảnh.
+- Có thể bổ sung ảnh riêng cho phân cảnh.
+
+**Cách 2: Tạo video độc lập theo từng phân cảnh**
+- Người dùng không bắt buộc phải tạo sản phẩm trong hệ thống trước.
+- Thêm phân cảnh.
+- Tải trực tiếp một ảnh riêng cho phân cảnh.
+- Nhập nội dung, lời thoại, chữ hiển thị và thời lượng.
+- Tiếp tục thêm các phân cảnh khác.
+- Ghép các phân cảnh thành video hoàn chỉnh.
+
+Không được để việc thiếu `productId` khiến người dùng không thể tải ảnh hoặc tạo video độc lập.
+
+Nếu cần bổ sung API tải ảnh riêng cho phân cảnh, hãy thiết kế theo kiến trúc hiện tại, sử dụng ImageKit và lưu URL media phù hợp để phân cảnh có thể được lưu, tải lại và dựng video.
+
+Ưu tiên tận dụng các trường dữ liệu hiện có như `image_url`, `image_id`, `product_id` và cấu trúc `video_scenes`.
+
+Không tạo thêm bảng hoặc migration nếu không thực sự cần thiết.
+
+### 3. Kiểm tra toàn bộ quy trình upload
+
+Rà soát:
+
+- Đọc tệp bằng FileReader.
+- Xác định MIME type.
+- Kiểm tra phần mở rộng.
+- Kiểm tra dung lượng.
+- Đọc kích thước ảnh.
+- Gửi dữ liệu lên Worker.
+- Lưu trữ ImageKit.
+- Nhận kết quả trả về.
+- Cập nhật `imageId`, `imageUrl`, `productId`, `sourceType`.
+- Cập nhật danh sách ảnh sản phẩm nếu ảnh thuộc sản phẩm.
+- Lưu được ảnh sau khi tải lại dự án.
+
+Định dạng hỗ trợ: JPG, JPEG, PNG, WEBP.
+
+Dung lượng tối đa: 5MB/ảnh, trừ khi giới hạn hiện tại của hệ thống có quy định chặt chẽ hơn.
+
+Không để trường hợp báo tải thành công nhưng URL ảnh không sử dụng được.
+
+### 4. Cập nhật bản xem trước ngay sau khi tải ảnh
+
+Sau khi tải ảnh thành công:
+
+- Ảnh phải xuất hiện trong khu vực phân cảnh.
+- Ảnh phải được cập nhật vào canvas xem trước.
+- Khi chuyển qua phân cảnh khác, hình ảnh phải thay đổi đúng theo phân cảnh.
+- Khi thay ảnh, bản xem trước phải cập nhật ảnh mới.
+- Khi tải lại dự án, ảnh vẫn được hiển thị.
+- Không sử dụng ảnh cũ trong cache.
+- Không để canvas tiếp tục hiển thị ảnh trước đó.
+
+Kiểm tra các thành phần:
+- `loadedImgCacheRef`.
+- `imageCacheRevision`.
+- Hàm `drawSceneFrame()`.
+- Cơ chế preload ảnh.
+- Cơ chế cập nhật canvas.
+
+Phải kiểm tra cả trường hợp ảnh tải thành công nhưng trình duyệt không thể đọc ảnh do CORS hoặc URL ImageKit.
+
+---
+
+# V. HOÀN THIỆN TOÀN BỘ QUY TRÌNH TẠO VIDEO NHIỀU PHÂN CẢNH
+
+Đây là hạng mục quan trọng nhất.
+
+Hiện tại, Không gian tạo & chỉnh sửa video có nhiều nút đang sáng nhưng không hoạt động, hoặc bị mờ và không thể sử dụng. Người dùng chưa thể hoàn thành một video gồm nhiều phân cảnh theo nhu cầu thực tế.
+
+Tôi yêu cầu kiểm tra và hoàn thiện toàn bộ quy trình, không chỉ sửa riêng từng nút.
+
+## 1. Xác định quy trình sử dụng cuối cùng
+
+Người dùng cần có thể thực hiện quy trình sau:
+
+**Bước 1. Tạo dự án video**
+
+Người dùng có thể:
+- Chọn một sản phẩm có sẵn.
+- Hoặc tạo video độc lập, không bắt buộc gắn với sản phẩm.
+
+Nhập:
+- Tên video.
+- Tỷ lệ khung hình.
+- Thời lượng mục tiêu.
+- Ngôn ngữ.
+- Phong cách.
+- Đối tượng người xem.
+- CTA nếu cần.
+
+**Bước 2. Tạo các phân cảnh**
+
+Có hai phương thức:
+
+- AI viết kịch bản và tự chia thành nhiều phân cảnh.
+- Người dùng tự thêm từng phân cảnh và nhập nội dung.
+
+Mỗi phân cảnh phải có các thông tin:
+
+- Hình ảnh riêng.
+- Nội dung/lời thoại.
+- Chữ hiển thị trên video.
+- Thời lượng.
+- Chuyển động.
+- Hiệu ứng.
+- Chuyển cảnh.
+- Nguồn hình ảnh.
+
+Người dùng có thể tùy chỉnh độc lập từng phân cảnh.
+
+**Bước 3. Hoàn thiện từng phân cảnh**
+
+Cho phép:
+- Thêm phân cảnh.
+- Xóa phân cảnh.
+- Sắp xếp thứ tự.
+- Chọn hoặc thay ảnh.
+- Nhập và sửa lời thoại.
+- Nhập và sửa chữ hiển thị.
+- Điều chỉnh thời lượng.
+- Điều chỉnh hiệu ứng.
+- Chọn chuyển động.
+- Chọn chuyển cảnh.
+- Xem trước riêng từng phân cảnh.
+
+Các chức năng phải thực sự hoạt động, không chỉ có nút giao diện.
+
+**Bước 4. Xem trước toàn bộ video**
+
+Người dùng có thể:
+- Xem từng phân cảnh.
+- Phát thử toàn bộ video.
+- Tạm dừng.
+- Kéo thanh thời gian.
+- Chuyển qua lại giữa các phân cảnh.
+- Kiểm tra nội dung, hình ảnh và thời lượng.
+
+Bản xem trước phải sử dụng đúng ảnh và nội dung hiện tại của từng phân cảnh.
+
+**Bước 5. Thiết lập âm thanh**
+
+Cho phép:
+- Bật/tắt giọng đọc.
+- Chọn giọng đọc.
+- Điều chỉnh tốc độ.
+- Nghe thử.
+- Bật/tắt nhạc nền.
+- Chọn không khí âm nhạc.
+- Điều chỉnh âm lượng.
+
+Nếu người dùng không bật giọng đọc, video vẫn phải xuất được bình thường với hình ảnh, chữ hiển thị và nhạc nền theo cấu hình.
+
+Nếu người dùng bật giọng đọc, phải xử lý chính xác việc tạo âm thanh và đồng bộ lời đọc theo từng phân cảnh.
+
+Không để một lỗi TTS làm mất toàn bộ khả năng xuất video khi người dùng có thể lựa chọn tắt giọng đọc.
+
+**Bước 6. Dựng và xuất video hoàn chỉnh**
+
+Đây là bước phải được ưu tiên hoàn thiện.
+
+Người dùng phải có thể tạo ra một video duy nhất gồm nhiều phân cảnh nối tiếp nhau.
+
+Video đầu ra phải:
+- Có đủ tất cả phân cảnh.
+- Đúng thứ tự.
+- Đúng thời lượng.
+- Đúng ảnh của từng phân cảnh.
+- Có nội dung chữ và phụ đề.
+- Có chuyển động camera.
+- Có hiệu ứng và chuyển cảnh.
+- Có nhạc nền nếu bật.
+- Có giọng đọc nếu bật.
+- Có CTA ở vị trí phù hợp.
+- Không bị mất hình ảnh giữa các phân cảnh.
+- Không bị đen màn hình hoặc đứng hình.
+- Không bị mất tiếng.
+- Không bị sai tỷ lệ khung hình.
+
+Sau khi hoàn thành, người dùng có thể xem, tải video về thiết bị và mở lại video trong mục Video của tôi.
+
+## 2. Rà soát các nút chức năng
+
+Phải lập danh sách toàn bộ nút trong `StudioPage.tsx` và những component được sử dụng trong quy trình.
+
+Kiểm tra từng nút:
+
+| Nhóm chức năng | Nội dung cần kiểm tra |
+|---|---|
+| Sản phẩm | Chọn sản phẩm, thay đổi sản phẩm |
+| Kịch bản | AI viết kịch bản, chọn phương án |
+| Phân cảnh | Thêm, xóa, sắp xếp, tạo lại |
+| Hình ảnh | Chọn ảnh, tải ảnh, thay ảnh |
+| AI phân cảnh | Phân tích ảnh, chỉnh sửa nội dung |
+| Nội dung | Sửa lời thoại, chữ hiển thị |
+| Hiệu ứng | Chuyển động, ánh sáng, chuyển cảnh |
+| Xem trước | Phát, tạm dừng, tua, chuyển cảnh |
+| Âm thanh | Nghe thử giọng đọc, bật/tắt nhạc |
+| Dự án | Lưu, mở lại, cập nhật |
+| Xuất video | Dựng, hủy, tải video |
+| Quản lý video | Xem lại video đã xuất |
+
+Đối với từng nút, phải xác định:
+
+1. Sự kiện click có được kích hoạt không?
+2. Có gọi đúng hàm xử lý không?
+3. Hàm có nhận đúng dữ liệu không?
+4. Có gọi đúng API không?
+5. API có trả về kết quả không?
+6. Giao diện có cập nhật đúng trạng thái không?
+7. Có thông báo lỗi nếu thất bại không?
+
+Không được để các nút có hình thức như đang sử dụng được nhưng thực tế không có hành động.
+
+Nếu chức năng không được hỗ trợ trong chế độ miễn phí, phải ghi rõ lý do và phương án sử dụng thay thế.
+
+Không được vô hiệu hóa nhầm các chức năng dựng video miễn phí.
+
+## 3. Đặc biệt xử lý quy trình dựng từng phân cảnh và ghép video
+
+Trong mã nguồn hiện tại, quy trình xuất video có điều kiện yêu cầu từng phân cảnh phải có bản dựng riêng, được lưu trữ, xác nhận và có chữ ký nội dung còn hiệu lực trước khi ghép video tổng thể.
+
+Hãy kiểm tra lại toàn bộ thiết kế này.
+
+Không được mặc định rằng người dùng luôn cần phải thực hiện một quy trình dựng riêng và xác nhận thủ công cho từng phân cảnh trước khi xuất video.
+
+Mục tiêu sử dụng chính là:
+
+**Người dùng cung cấp ảnh và nội dung cho từng phân cảnh → hệ thống dựng video hoàn chỉnh từ toàn bộ phân cảnh đó.**
+
+Nếu quy trình dựng riêng và xác nhận từng cảnh hiện tại đang tạo ra rào cản không cần thiết, hãy thiết kế lại luồng sử dụng theo hướng đơn giản hơn.
+
+Yêu cầu:
+- Cho phép xuất trực tiếp video tổng thể từ các phân cảnh đã có ảnh và nội dung hợp lệ.
+- Không bắt buộc người dùng phải dựng và duyệt từng clip riêng nếu không cần thiết.
+- Vẫn giữ khả năng dựng riêng từng phân cảnh nếu đây là chức năng bổ trợ hữu ích.
+- Không xóa hoặc phá vỡ cơ chế kiểm duyệt hiện có.
+- Không làm mất dữ liệu bản dựng cũ.
+- Không làm sai lệch trạng thái dự án.
+- Không bỏ qua kiểm tra tính hợp lệ của ảnh, nội dung và thời lượng.
+
+Có thể giữ lại quy trình kiểm duyệt từng phân cảnh như một tùy chọn nâng cao, nhưng không được để nó cản trở quy trình xuất video cơ bản.
+
+## 4. Kiểm tra bộ dựng video
+
+Rà soát `src/lib/videoRenderer.ts`.
+
+Kiểm tra:
+- `renderProjectVideo()`.
+- `drawSceneFrame()`.
+- `synthesizeMusicTrack()`.
+- Cơ chế WebCodecs.
+- Cơ chế MediaRecorder fallback.
+- MP4 muxing.
+- Đồng bộ âm thanh.
+- Tính toán thời lượng.
+- Xử lý các phân cảnh nối tiếp.
+- Xử lý ảnh ImageKit.
+- Xử lý video nếu có.
+- Hủy quá trình dựng.
+- Giải phóng bộ nhớ.
+
+Đặc biệt kiểm tra tính tương thích giữa WebCodecs và MediaRecorder trên các trình duyệt.
+
+Nếu WebCodecs không được hỗ trợ hoặc không hỗ trợ codec cần thiết, hệ thống phải tự chuyển sang phương thức dựng tương thích khi có thể.
+
+Không để nút xuất video bị khóa chỉ vì một công nghệ dựng không được trình duyệt hỗ trợ, nếu vẫn còn phương án dự phòng.
+
+Kiểm tra lỗi khi:
+- Một phân cảnh không có ảnh.
+- Một ảnh không tải được.
+- Một URL ảnh hết hiệu lực.
+- Một phân cảnh có nội dung trống.
+- Một phân cảnh có thời lượng không hợp lệ.
+- Một phân cảnh có thời lượng quá ngắn.
+- Người dùng thay đổi nội dung trong lúc dựng.
+- Người dùng hủy quá trình dựng.
+- Thiết bị không đủ bộ nhớ.
+- Trình duyệt không hỗ trợ codec.
+
+Phải hiển thị thông báo cụ thể, không để lỗi làm treo toàn bộ giao diện.
+
+## 5. Đồng nhất thời lượng
+
+Kiểm tra sự thống nhất về thời lượng giữa:
+
+- Thời lượng mục tiêu của dự án.
+- Tổng thời lượng các phân cảnh.
+- Thời lượng lưu trong D1.
+- Thời lượng dựng thực tế.
+- Thời lượng giọng đọc.
+- Thời lượng file xuất.
+
+Không được để frontend sử dụng một cách tính, backend sử dụng cách tính khác và bộ dựng video sử dụng cách tính thứ ba.
+
+Nếu người dùng chỉnh sửa thời lượng của từng phân cảnh, hệ thống phải cập nhật tổng thời lượng chính xác.
+
+Không tự ý cắt bỏ phân cảnh hoặc nội dung để ép tổng thời lượng về thời lượng mục tiêu.
+
+Nếu tổng thời lượng vượt hạn mức tài khoản, cần thông báo rõ và hướng dẫn điều chỉnh.
+
+---
+
+# VI. HOÀN THIỆN CHỨC NĂNG LƯU DỰ ÁN VÀ KHÔI PHỤC DỮ LIỆU
+
+Kiểm tra các API:
+
+- `POST /api/projects`
+- `GET /api/projects`
+- `GET /api/projects/:id`
+- `PUT /api/projects/:id`
+- Các API tạo, cập nhật và xóa phân cảnh.
+- Các API lưu bản dựng riêng.
+- Các API kiểm duyệt phân cảnh.
+- Các API quản lý job xuất video.
+- Các API tải video lên ImageKit.
+
+Yêu cầu:
+
+1. Người dùng có thể lưu dự án ngay cả khi chưa tạo video hoàn chỉnh.
+2. Các phân cảnh được lưu đầy đủ.
+3. Ảnh riêng từng phân cảnh phải được lưu đúng.
+4. Nội dung, thời lượng, thứ tự và hiệu ứng phải được lưu.
+5. Khi mở lại dự án, phải khôi phục chính xác trạng thái trước đó.
+6. Khi cập nhật một phân cảnh, không làm mất dữ liệu các phân cảnh khác.
+7. Khi thêm hoặc xóa phân cảnh, thứ tự phải được đánh lại chính xác.
+8. Không tạo trùng dự án do nhấn nút lưu nhiều lần.
+9. Không ghi đè nhầm dữ liệu khi nhiều thao tác liên tiếp.
+10. Khi lưu thất bại, phải thông báo rõ và không hiển thị trạng thái thành công giả.
+
+Nếu phải bổ sung logic backend, phải bảo đảm dữ liệu cũ vẫn đọc được.
+
+---
+
+# VII. XỬ LÝ XÁC NHẬN XÓA HIỂN THỊ NGAY Ở GIỮA MÀN HÌNH
+
+Hiện tại, một số thao tác xóa vẫn hiển thị xác nhận ở phía dưới nội dung, gây bất tiện cho người dùng.
+
+Yêu cầu rà soát toàn bộ chức năng xóa trong hệ thống.
+
+Các đối tượng cần kiểm tra:
+- Sản phẩm.
+- Ảnh sản phẩm.
+- Dự án video.
+- Phân cảnh.
+- Video đã xuất.
+- Tài khoản.
+- Mẫu video.
+- Các dữ liệu khác có thao tác xóa trong giao diện.
+
+### Yêu cầu hiển thị
+
+Khi nhấn nút Xóa:
+
+- Mở hộp thoại xác nhận ngay lập tức.
+- Hộp thoại hiển thị chính giữa màn hình.
+- Có lớp nền làm mờ phía sau.
+- Không hiển thị thông báo xác nhận ở cuối danh sách.
+- Không bắt người dùng cuộn trang để tìm nút xác nhận.
+- Có tên đối tượng chuẩn bị xóa.
+- Có nút Hủy.
+- Có nút Xác nhận xóa.
+- Khi nhấn Hủy, không thực hiện xóa.
+- Khi đang xử lý, vô hiệu hóa nút xác nhận để tránh gửi nhiều lần.
+
+Tận dụng component `ConfirmDialog.tsx` hiện có.
+
+Rà soát và thống nhất cách sử dụng trên toàn hệ thống.
+
+Kiểm tra thêm:
+- Z-index.
+- Vị trí fixed.
+- Khả năng hiển thị trên mobile.
+- Trường hợp danh sách dài.
+- Trường hợp nội dung trang có thanh cuộn.
+- Khả năng đóng hộp thoại.
+- Không để hộp thoại bị che bởi header, sidebar hoặc panel khác.
+
+Không được nhầm các hộp thoại xác nhận xóa với các biểu mẫu chỉnh sửa, đặt lại mật khẩu hoặc quản lý hạn mức.
+
+Không thay đổi những chức năng không liên quan.
+
+---
+
+# VIII. SỬA TÊN PHÂN CẢNH
+
+Thay toàn bộ cách hiển thị:
+
+`Phân cảnh #1`
+
+thành:
+
+`Phân cảnh 1`
+
+Tương tự:
+- Phân cảnh #2 → Phân cảnh 2.
+- Phân cảnh #3 → Phân cảnh 3.
+- Phân cảnh #n → Phân cảnh n.
+
+Áp dụng thống nhất tại:
+- Tiêu đề thẻ phân cảnh.
+- Thông báo tải ảnh.
+- Thông báo dựng video.
+- Thông báo xác nhận.
+- Các thông báo lỗi liên quan.
+- Các khu vực khác trong Không gian tạo & chỉnh sửa video.
+
+Không thay đổi ID, sortOrder hoặc dữ liệu kỹ thuật của phân cảnh.
+
+Chỉ thay đổi cách hiển thị cho người dùng.
+
+---
+
+# IX. YÊU CẦU VỀ GIAO DIỆN VÀ TRẠNG THÁI CHỨC NĂNG
+
+Kiểm tra toàn bộ giao diện Không gian tạo & chỉnh sửa video trên máy tính và điện thoại.
+
+Yêu cầu:
+- Các nút có trạng thái rõ ràng.
+- Không để nút sáng nhưng không có tác dụng.
+- Không để nút bị mờ nếu chức năng vẫn có thể sử dụng.
+- Có trạng thái loading khi xử lý.
+- Có thanh tiến trình khi tải ảnh và dựng video.
+- Có thông báo thành công hoặc thất bại.
+- Không để giao diện bị nhảy hoặc vỡ bố cục.
+- Các trường nhập liệu hiển thị đầy đủ.
+- Các nút dễ thao tác trên màn hình cảm ứng.
+- Bản xem trước không bị tràn khỏi màn hình.
+- Các thẻ phân cảnh hiển thị rõ ràng và dễ chỉnh sửa.
+
+Giữ nguyên phong cách thiết kế hiện tại của website.
+
+Không tự ý thay đổi toàn bộ giao diện, màu sắc, bố cục hoặc những phần đang hoạt động ổn định.
+
+Chỉ điều chỉnh những khu vực cần thiết để hoàn thiện trải nghiệm.
+
+---
+
+# X. NGUYÊN TẮC BẢO TOÀN DỮ LIỆU VÀ KIẾN TRÚC
+
+Đây là yêu cầu bắt buộc, không được vi phạm.
+
+### 1. GitHub
+
+- Chỉ làm việc trên nhánh `main`.
+- Không tạo nhánh mới.
+- Không force push.
+- Không ghi đè các commit mới hơn.
+- Trước khi chỉnh sửa phải đồng bộ phiên bản mới nhất.
+- Nếu remote có commit mới trong quá trình làm việc, phải đồng bộ và xử lý xung đột an toàn.
+
+### 2. Cloudflare D1
+
+Database production hiện tại:
+
+`ai-product-video-studio-db`
+
+Database ID:
+
+`db9fca26-709e-48b2-8114-386d3c31c39c`
+
+Không được:
+- Xóa database.
+- Tạo database mới thay thế.
+- Xóa bảng đang sử dụng.
+- Xóa dữ liệu dự án, sản phẩm, tài khoản hoặc video.
+- Tự ý thay đổi cấu trúc bảng đang hoạt động.
+- Chạy migration phá hủy dữ liệu.
+- Thực hiện thao tác reset dữ liệu production.
+
+Nếu thực sự cần thay đổi schema, chỉ được bổ sung migration theo hướng tương thích ngược, không phá vỡ dữ liệu cũ.
+
+Ưu tiên tận dụng cấu trúc hiện có.
+
+### 3. ImageKit
+
+Tiếp tục sử dụng ImageKit hiện tại.
+
+Không chuyển sang Cloudflare R2.
+
+Không thay đổi endpoint hoặc cấu hình lưu trữ đang hoạt động.
+
+Không xóa media cũ.
+
+Không để việc sửa chức năng tải ảnh làm ảnh hưởng đến thư viện ảnh sản phẩm hiện có.
+
+### 4. AI và chi phí
+
+Tiếp tục sử dụng Gemini theo cấu hình quản trị hiện tại.
+
+Không tự ý:
+- Thay model bằng model khác.
+- Bỏ qua cấu hình quản trị AI.
+- Bỏ qua hạn mức.
+- Bỏ qua quyền tài khoản.
+- Đưa API key ra frontend.
+- Kích hoạt API video tính phí.
+- Chuyển sang dịch vụ tạo video trả phí.
+- Thay đổi chính sách vận hành miễn phí.
+
+Giữ nguyên nguyên tắc dựng video miễn phí trực tiếp trên trình duyệt.
+
+### 5. Tài khoản và bảo mật
+
+Không thay đổi:
+- Cơ chế đăng nhập.
+- Cơ chế duy trì phiên.
+- Phân quyền tài khoản.
+- Super Admin.
+- Admin.
+- Editor.
+- User.
+- Cơ chế xác thực API.
+- Cấu hình bảo mật hiện tại.
+
+Không làm ảnh hưởng đến chức năng quản trị và sử dụng website.
+
+---
+
+# XI. KIỂM THỬ BẮT BUỘC SAU KHI SỬA
+
+Không được kết luận hoàn thành chỉ vì mã nguồn không báo lỗi cú pháp.
+
+Phải thực hiện kiểm thử theo từng nhóm.
+
+## 1. Kiểm thử AI viết kịch bản
+
+- Chọn sản phẩm có dữ liệu đầy đủ.
+- Nhấn AI Viết kịch bản.
+- Kiểm tra API thực tế.
+- Kiểm tra kết quả Gemini.
+- Kiểm tra chế độ dự phòng khi Gemini không khả dụng.
+- Kiểm tra các phương án kịch bản.
+- Chọn phương án khác.
+- Kiểm tra dữ liệu phân cảnh.
+- Kiểm tra thời lượng tổng.
+- Kiểm tra thông báo lỗi.
+
+## 2. Kiểm thử tải ảnh
+
+- Tải JPG.
+- Tải PNG.
+- Tải WEBP.
+- Tải ảnh dung lượng lớn hơn giới hạn.
+- Tải tệp không phải ảnh.
+- Tải ảnh cho phân cảnh không gắn sản phẩm.
+- Tải ảnh cho phân cảnh có gắn sản phẩm.
+- Thay ảnh.
+- Tải lại dự án.
+- Kiểm tra ảnh còn hiển thị.
+
+## 3. Kiểm thử tạo video nhiều phân cảnh
+
+Tạo một dự án thử nghiệm có tối thiểu 4 phân cảnh.
+
+Mỗi phân cảnh sử dụng:
+- Một hình ảnh riêng.
+- Nội dung riêng.
+- Lời thoại riêng.
+- Chữ hiển thị riêng.
+- Thời lượng riêng.
+- Hiệu ứng riêng.
+
+Thực hiện:
+- Thêm phân cảnh.
+- Sửa nội dung.
+- Thay ảnh.
+- Sắp xếp lại.
+- Xóa một phân cảnh.
+- Lưu dự án.
+- Mở lại dự án.
+- Phát thử toàn bộ.
+- Dựng video.
+- Xuất video.
+
+Phải kiểm tra video đầu ra thực tế, không chỉ kiểm tra thông báo thành công.
+
+## 4. Kiểm thử âm thanh
+
+- Xuất video không có giọng đọc.
+- Xuất video có giọng đọc.
+- Xuất video có nhạc nền.
+- Xuất video không có nhạc nền.
+- Kiểm tra âm thanh không bị mất.
+- Kiểm tra lời đọc không bị lệch quá xa so với thời điểm phân cảnh.
+- Kiểm tra thời lượng âm thanh không vượt quá video.
+
+## 5. Kiểm thử xóa
+
+Kiểm tra tất cả thao tác xóa:
+- Hộp thoại xuất hiện ngay.
+- Hộp thoại ở giữa màn hình.
+- Nhấn Hủy không xóa.
+- Nhấn Xác nhận mới xóa.
+- Không xóa nhầm đối tượng.
+- Danh sách cập nhật sau khi xóa.
+
+## 6. Kiểm thử thiết bị
+
+Tối thiểu:
+- Desktop Chrome.
+- Desktop Edge.
+- Safari iPhone.
+- Trình duyệt Google trên iPhone.
+- Chrome Android.
+
+Nếu không có thiết bị thật để kiểm thử, phải ghi rõ giới hạn. Không được báo đã kiểm thử trên thiết bị thật khi thực tế chỉ sử dụng giả lập.
+
+## 7. Kiểm thử hồi quy
+
+Sau khi sửa, phải kiểm tra lại:
+- Đăng nhập.
+- Duy trì phiên.
+- Quản lý sản phẩm.
+- Tải ảnh sản phẩm.
+- Quản lý dự án.
+- Video của tôi.
+- Quản trị AI.
+- Quản lý tài khoản.
+- Phân quyền.
+- Hạn mức.
+- Lưu trữ ImageKit.
+- Dữ liệu D1.
+
+Không để những chức năng này bị ảnh hưởng bởi các thay đổi trong StudioPage.
+
+---
+
+# XII. BUILD, DEPLOY VÀ ĐẨY CODE LÊN GITHUB
+
+Sau khi hoàn tất chỉnh sửa:
+
+### 1. Kiểm tra mã nguồn
+
+Chạy lần lượt:
+
+`npm ci`
+
+`npm run typecheck`
+
+`npm run build`
+
+Sửa toàn bộ lỗi phát sinh trước khi triển khai.
+
+Không được bỏ qua lỗi TypeScript hoặc build.
+
+### 2. Kiểm tra Git
+
+- Kiểm tra `git status`.
+- Kiểm tra các file thay đổi.
+- Kiểm tra diff.
+- Đảm bảo không có file secret, token hoặc dữ liệu nhạy cảm.
+- Đảm bảo không có thay đổi ngoài phạm vi yêu cầu.
+- Đảm bảo không có file build hoặc dữ liệu tạm không cần thiết.
+
+### 3. Đẩy code
+
+Sau khi kiểm thử đạt yêu cầu:
+
+- Commit các thay đổi.
+- Push trực tiếp lên nhánh `main`.
+- Không tạo nhánh khác.
+- Không force push.
+- Không ghi đè commit của người dùng.
+- Nếu có xung đột, phải xử lý và giữ nguyên các thay đổi hợp lệ.
+
+### 4. Triển khai Cloudflare
+
+Theo dõi GitHub Actions hiện có.
+
+Chỉ kết luận triển khai thành công khi:
+- Workflow build thành công.
+- Workflow deploy thành công.
+- Cloudflare Workers báo triển khai thành công.
+- Website phản hồi bình thường.
+
+Không tự ý chạy migration production nếu không có thay đổi schema đã được kiểm tra và xác định là cần thiết.
+
+---
+
+# XIII. BÁO CÁO KẾT QUẢ SAU KHI HOÀN THÀNH
+
+Sau khi thực hiện, phải báo cáo rõ:
+
+1. Commit SHA mới nhất trước khi chỉnh sửa.
+2. Nguyên nhân gốc rễ của từng lỗi.
+3. Những file đã chỉnh sửa.
+4. Những chức năng đã khắc phục.
+5. Quy trình tạo video đã hoàn thiện như thế nào.
+6. Có hỗ trợ tạo video độc lập bằng ảnh và nội dung riêng cho từng phân cảnh hay chưa.
+7. Kết quả kiểm thử AI viết kịch bản.
+8. Kết quả kiểm thử tải ảnh.
+9. Kết quả kiểm thử xem trước.
+10. Kết quả kiểm thử dựng và xuất video hoàn chỉnh.
+11. Kết quả kiểm thử xác nhận xóa.
+12. Kết quả kiểm thử hồi quy.
+13. Kết quả `npm run typecheck`.
+14. Kết quả `npm run build`.
+15. Trạng thái GitHub Actions.
+16. Commit SHA sau khi push.
+17. Link commit GitHub.
+18. Trạng thái triển khai Cloudflare.
+
+Phải phân biệt rõ:
+- Đã sửa mã nguồn.
+- Đã kiểm thử bằng dữ liệu giả lập.
+- Đã kiểm thử API thực tế.
+- Đã kiểm thử trên trình duyệt.
+- Đã kiểm thử trên thiết bị thật.
+- Đã build thành công.
+- Đã deploy thành công.
+
+Không được báo cáo một chức năng đã hoạt động hoàn chỉnh nếu mới chỉ sửa giao diện hoặc mới chỉ build thành công.
+
+---
+
+# XIV. TIÊU CHÍ NGHIỆM THU CUỐI CÙNG
+
+Chỉ được xem là hoàn thành khi đáp ứng các điều kiện sau:
+
+**1. AI viết kịch bản**
+- Nút hoạt động thực tế.
+- Tạo được nhiều phương án.
+- Có dữ liệu phân cảnh hợp lệ.
+- Có thông báo rõ ràng.
+
+**2. Tải ảnh riêng cho phân cảnh**
+- Chọn được ảnh trên desktop và mobile.
+- Có thể tải ảnh không cần gắn sản phẩm.
+- Ảnh được lưu trữ và tải lại được.
+- Bản xem trước cập nhật đúng.
+
+**3. Tạo video nhiều phân cảnh**
+- Người dùng tự tạo từng phân cảnh.
+- Mỗi phân cảnh có ảnh và nội dung riêng.
+- Có thể chỉnh sửa, sắp xếp và xóa.
+- Có thể xem trước toàn bộ video.
+- Không bắt buộc dựng và duyệt clip riêng từng phân cảnh mới được xuất video cơ bản.
+
+**4. Xuất video**
+- Ghép được nhiều phân cảnh thành một video.
+- Hình ảnh đúng thứ tự.
+- Nội dung đúng.
+- Thời lượng chính xác.
+- Âm thanh đúng cấu hình.
+- Tải video được.
+- Lưu và mở lại được trong Video của tôi.
+
+**5. Xác nhận xóa**
+- Xuất hiện ngay giữa màn hình.
+- Không còn xác nhận xóa nằm ở cuối nội dung.
+
+**6. Giao diện**
+- Đổi Phân cảnh #1 thành Phân cảnh 1.
+- Không còn nút sáng nhưng không hoạt động.
+- Không làm vỡ giao diện desktop/mobile.
+
+**7. Bảo toàn hệ thống**
+- Không mất dữ liệu D1.
+- Không mất ảnh/video ImageKit.
+- Không hỏng tài khoản và phân quyền.
+- Không làm hỏng các chức năng đang hoạt động ổn định.
+
+**8. GitHub và Cloudflare**
+- Code đã được push lên `main`.
+- Build thành công.
+- GitHub Actions thành công.
+- Cloudflare deploy thành công.
+
+---
+
+## YÊU CẦU THỰC HIỆN CUỐI CÙNG
+
+Hãy trực tiếp thực hiện toàn bộ công việc trên theo thứ tự:
+
+**ĐỌC MÃ NGUỒN → XÁC ĐỊNH NGUYÊN NHÂN → LẬP PHƯƠNG ÁN SỬA → CHỈNH SỬA → KIỂM THỬ → BUILD → PUSH GITHUB MAIN → DEPLOY CLOUDFLARE → KIỂM TRA KẾT QUẢ.**
+
+Không dừng lại ở việc đưa ra nhận xét hoặc đề xuất.
+
+Không chỉ sửa để các nút có thể nhấn được mà phải bảo đảm các nút thực sự thực hiện đúng chức năng.
+
+Không chỉ tạo được bản xem trước mà phải hoàn thành được quy trình xuất một video thực tế gồm nhiều phân cảnh.
+
+Không được thay đổi những chức năng đang ổn định chỉ để giải quyết một lỗi riêng lẻ.
+
+**ƯU TIÊN SỐ MỘT LÀ HOÀN THIỆN ĐƯỢC QUY TRÌNH TẠO VIDEO THỰC TẾ, ĐƠN GIẢN, DỄ SỬ DỤNG VÀ HOẠT ĐỘNG ỔN ĐỊNH; NGƯỜI DÙNG CÓ THỂ TỰ CUNG CẤP HÌNH ẢNH VÀ NỘI DUNG CHO TỪNG PHÂN CẢNH ĐỂ TẠO RA MỘT VIDEO HOÀN CHỈNH.**

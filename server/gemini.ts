@@ -260,7 +260,8 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
     const sourceScenes = Array.isArray(v.scenes) ? v.scenes.slice(0, 12) : [];
     const count = sourceScenes.length;
     if (count === 0) throw new Error(`Phương án ${variantIdx + 1} không có phân cảnh.`);
-    const safeTotal = Math.max(count, input.durationSec);
+    const minPerScene = 2;
+    const safeTotal = Math.max(count * minPerScene, input.durationSec);
     const weights = sourceScenes.map(s => (Number.isFinite(Number(s?.durationSec)) && Number(s?.durationSec) > 0 ? Number(s?.durationSec) : 1));
     const weightTotal = weights.reduce((sum, val) => sum + val, 0) || count;
     let remaining = safeTotal;
@@ -268,11 +269,11 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
       const leftAfter = count - 1 - idx;
       let dur: number;
       if (idx === count - 1) {
-        dur = Number(Math.max(1, remaining).toFixed(1));
+        dur = Number(Math.max(minPerScene, remaining).toFixed(1));
       } else {
         const ideal = Number(((safeTotal * weights[idx]) / weightTotal).toFixed(1));
-        const maxForThis = Number((remaining - leftAfter).toFixed(1));
-        dur = Number(Math.max(1, Math.min(ideal, maxForThis)).toFixed(1));
+        const maxForThis = Number((remaining - leftAfter * minPerScene).toFixed(1));
+        dur = Number(Math.max(minPerScene, Math.min(ideal, maxForThis)).toFixed(1));
         remaining = Number((remaining - dur).toFixed(1));
       }
       const motion = String(s?.motionType || '') as GeneratedScene['motionType'];
