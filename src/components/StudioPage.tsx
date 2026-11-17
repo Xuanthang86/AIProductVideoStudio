@@ -65,6 +65,7 @@ interface Props {
   quota: UserQuota | null;
   initialProductId?: string;
   initialTemplate?: VideoTemplate | null;
+  initialVideoType?: string;
   initialProjectId?: string;
   onGoProducts: () => void;
   onGoMyVideos: () => void;
