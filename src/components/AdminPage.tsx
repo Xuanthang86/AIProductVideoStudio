@@ -396,34 +396,37 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
         <div className="admin-content">
           {tab === 'dashboard' && stats && (
             <>
-              <div className="kpi-grid">
-                <div className="kpi-card kpi-card-users">
-                  <small><Users size={14} /> Tổng người dùng</small>
-                  <strong>{stats.totalUsers}</strong>
+              <div className="kpi-grid kpi-grid-enhanced">
+                <div className="kpi-card kpi-card-users kpi-card-enhanced">
+                  <div className="kpi-card-heading"><small><Users size={15} /> Tổng người dùng</small><span className="kpi-icon"><Users size={20} /></span></div>
+                  <div className="kpi-value-row"><strong>{stats.totalUsers}</strong><span>tài khoản</span></div>
                   <div className="kpi-status-row" aria-label="Thống kê trạng thái người dùng">
                     <span className="kpi-status pending">Chờ duyệt <b>{stats.pendingUsers}</b></span>
                     <span className="kpi-status active">Hoạt động <b>{stats.activeUsers}</b></span>
                     <span className="kpi-status locked">Khóa <b>{stats.lockedUsers}</b></span>
                   </div>
                 </div>
-                <div className="kpi-card">
-                  <small>Tổng sản phẩm</small>
-                  <strong>{stats.totalProducts}</strong>
-                  <span>Sản phẩm lưu trữ trong hệ thống</span>
+                <div className="kpi-card kpi-card-products kpi-card-enhanced">
+                  <div className="kpi-card-heading"><small><Package size={15} /> Tổng sản phẩm</small><span className="kpi-icon"><Package size={20} /></span></div>
+                  <div className="kpi-value-row"><strong>{stats.totalProducts}</strong><span>sản phẩm</span></div>
+                  <div className="kpi-detail-row"><span className="kpi-detail-chip">Sản phẩm lưu trữ trong hệ thống</span></div>
                 </div>
-                <div className="kpi-card">
-                  <small>Tổng dự án video</small>
-                  <strong>{stats.totalVideos}</strong>
-                  <span>
-                    Hoàn thành: {stats.completedVideos} · Thất bại: {stats.failedVideos}
-                  </span>
+                <div className="kpi-card kpi-card-projects kpi-card-enhanced">
+                  <div className="kpi-card-heading"><small><Film size={15} /> Tổng dự án video</small><span className="kpi-icon"><Film size={20} /></span></div>
+                  <div className="kpi-value-row"><strong>{stats.totalVideos}</strong><span>dự án</span></div>
+                  <div className="kpi-status-row">
+                    <span className="kpi-status active">Hoàn thành <b>{stats.completedVideos}</b></span>
+                    <span className="kpi-status locked">Thất bại <b>{stats.failedVideos}</b></span>
+                  </div>
                 </div>
-                <div className="kpi-card">
-                  <small>Lượt tạo video</small>
-                  <strong>{stats.monthlyVideos}</strong>
-                  <span>
-                    Hôm nay: {stats.dailyVideos} · 7 ngày: {stats.weeklyVideos} · Tháng: {stats.monthlyVideos}
-                  </span>
+                <div className="kpi-card kpi-card-activity kpi-card-enhanced">
+                  <div className="kpi-card-heading"><small><Activity size={15} /> Lượt tạo video</small><span className="kpi-icon"><Activity size={20} /></span></div>
+                  <div className="kpi-value-row"><strong>{stats.monthlyVideos}</strong><span>trong tháng</span></div>
+                  <div className="kpi-status-row kpi-period-row">
+                    <span className="kpi-status">Hôm nay <b>{stats.dailyVideos}</b></span>
+                    <span className="kpi-status">7 ngày <b>{stats.weeklyVideos}</b></span>
+                    <span className="kpi-status active">Tháng <b>{stats.monthlyVideos}</b></span>
+                  </div>
                 </div>
               </div>
 
@@ -513,7 +516,7 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                         <td>
                           {u.role === 'SUPER_ADMIN' ? (
                             <span className="role-protected-tag">
-                              <Lock size={13} /> Super Admin (Bảo vệ)
+                              <Lock size={13} /> Super Admin
                             </span>
                           ) : canManage(u) ? (
                             <select value={u.role} onChange={e => userAction(u.id, 'role', { role: e.target.value })}>
@@ -856,71 +859,83 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
                 </div>
               </section>
 
-              <section className="panel-card">
+              <section className="panel-card catalog-management-card">
                 <h3>Ngành hàng ({industries.length})</h3>
-                <div className="search-box">
-                  <input value={newIndName} onChange={e => setNewIndName(e.target.value)} placeholder="Tên ngành hàng mới..." />
-                  <button className="primary-btn" disabled={busy || !newIndName.trim()} onClick={createIndustry}>
-                    <Plus size={15} /> Thêm ngành
-                  </button>
-                </div>
-                <div className="catalog-edit-list">
-                  {industries.map(industry => (
-                    <div className="catalog-edit-row" key={industry.id}>
-                      {editingIndustry?.id === industry.id ? (
-                        <>
-                          <input aria-label="Tên ngành hàng" value={editingIndustryName} onChange={e => setEditingIndustryName(e.target.value)} maxLength={100} />
-                          <button className="primary-btn" disabled={busy || !editingIndustryName.trim()} onClick={saveIndustry}>Lưu</button>
-                          <button className="secondary-btn" disabled={busy} onClick={() => { setEditingIndustry(null); setEditingIndustryName(''); }}>Hủy</button>
-                        </>
-                      ) : (
-                        <>
-                          <strong>{industry.name}</strong>
-                          <button className="secondary-btn" disabled={busy} onClick={() => { setEditingIndustry(industry); setEditingIndustryName(industry.name); }}>
-                            <Pencil size={14} /> Sửa
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                <details className="catalog-disclosure">
+                  <summary><Plus size={16} /> Thêm ngành hàng mới <ChevronDown size={16} /></summary>
+                  <div className="search-box catalog-disclosure-content">
+                    <input value={newIndName} onChange={e => setNewIndName(e.target.value)} placeholder="Tên ngành hàng mới..." maxLength={100} />
+                    <button className="primary-btn" disabled={busy || !newIndName.trim()} onClick={createIndustry}>
+                      <Plus size={15} /> Thêm ngành
+                    </button>
+                  </div>
+                </details>
+                <details className="catalog-disclosure">
+                  <summary><LayoutTemplate size={16} /> Danh sách ngành hàng đã có ({industries.length}) <ChevronDown size={16} /></summary>
+                  <div className="catalog-edit-list catalog-disclosure-content">
+                    {industries.map(industry => (
+                      <div className="catalog-edit-row" key={industry.id}>
+                        {editingIndustry?.id === industry.id ? (
+                          <>
+                            <input aria-label="Tên ngành hàng" value={editingIndustryName} onChange={e => setEditingIndustryName(e.target.value)} maxLength={100} />
+                            <button className="primary-btn" disabled={busy || !editingIndustryName.trim()} onClick={saveIndustry}>Lưu</button>
+                            <button className="secondary-btn" disabled={busy} onClick={() => { setEditingIndustry(null); setEditingIndustryName(''); }}>Hủy</button>
+                          </>
+                        ) : (
+                          <>
+                            <strong>{industry.name}</strong>
+                            <button className="secondary-btn" disabled={busy} onClick={() => { setEditingIndustry(industry); setEditingIndustryName(industry.name); }}>
+                              <Pencil size={14} /> Sửa
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </details>
               </section>
 
-              <section className="panel-card">
+              <section className="panel-card catalog-management-card">
                 <h3>Chủ đề video ({topics.length})</h3>
                 <p className="muted-copy">Danh mục chủ đề dùng chung trong Studio và bộ lọc thư viện mẫu video.</p>
-                <div className="search-box">
-                  <input
-                    value={newTopicName}
-                    onChange={e => setNewTopicName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') createTopic(); }}
-                    placeholder="Tên chủ đề video mới..."
-                    maxLength={80}
-                  />
-                  <button className="primary-btn" disabled={busy || !newTopicName.trim()} onClick={createTopic}>
-                    <Plus size={15} /> Thêm chủ đề
-                  </button>
-                </div>
-                <div className="catalog-edit-list">
-                  {topics.map(topic => (
-                    <div className="catalog-edit-row" key={topic.id}>
-                      {editingTopic?.id === topic.id ? (
-                        <>
-                          <input aria-label="Tên chủ đề video" value={editingTopicName} onChange={e => setEditingTopicName(e.target.value)} maxLength={80} />
-                          <button className="primary-btn" disabled={busy || !editingTopicName.trim()} onClick={saveTopic}>Lưu</button>
-                          <button className="secondary-btn" disabled={busy} onClick={() => { setEditingTopic(null); setEditingTopicName(''); }}>Hủy</button>
-                        </>
-                      ) : (
-                        <>
-                          <span className="pill-badge">{topic.name}</span>
-                          <button className="secondary-btn" disabled={busy} onClick={() => { setEditingTopic(topic); setEditingTopicName(topic.name); }}>
-                            <Pencil size={14} /> Sửa
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                <details className="catalog-disclosure">
+                  <summary><Plus size={16} /> Thêm chủ đề video mới <ChevronDown size={16} /></summary>
+                  <div className="search-box catalog-disclosure-content">
+                    <input
+                      value={newTopicName}
+                      onChange={e => setNewTopicName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') createTopic(); }}
+                      placeholder="Tên chủ đề video mới..."
+                      maxLength={80}
+                    />
+                    <button className="primary-btn" disabled={busy || !newTopicName.trim()} onClick={createTopic}>
+                      <Plus size={15} /> Thêm chủ đề
+                    </button>
+                  </div>
+                </details>
+                <details className="catalog-disclosure">
+                  <summary><LayoutTemplate size={16} /> Các chủ đề video đã có ({topics.length}) <ChevronDown size={16} /></summary>
+                  <div className="catalog-edit-list catalog-disclosure-content">
+                    {topics.map(topic => (
+                      <div className="catalog-edit-row" key={topic.id}>
+                        {editingTopic?.id === topic.id ? (
+                          <>
+                            <input aria-label="Tên chủ đề video" value={editingTopicName} onChange={e => setEditingTopicName(e.target.value)} maxLength={80} />
+                            <button className="primary-btn" disabled={busy || !editingTopicName.trim()} onClick={saveTopic}>Lưu</button>
+                            <button className="secondary-btn" disabled={busy} onClick={() => { setEditingTopic(null); setEditingTopicName(''); }}>Hủy</button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="pill-badge">{topic.name}</span>
+                            <button className="secondary-btn" disabled={busy} onClick={() => { setEditingTopic(topic); setEditingTopicName(topic.name); }}>
+                              <Pencil size={14} /> Sửa
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </details>
               </section>
             </>
           )}

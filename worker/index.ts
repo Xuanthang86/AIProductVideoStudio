@@ -511,7 +511,7 @@ function buildStructuredFreeScripts(input: {
 async function generateScriptsWithGeminiApi(input: {
   productName: string; brand: string; industry: string; description: string; highlights: string[];
   videoType: string; targetAudience: string; style: string; durationSec: number; language: string;
-}, apiKey: string) {
+}, apiKey: string, modelName = 'gemini-3.8-flash') {
   const sceneCount = input.durationSec <= 15 ? 3 : input.durationSec <= 30 ? 5 : input.durationSec <= 45 ? 6 : input.durationSec <= 60 ? 7 : 9;
   const prompt = [
     `Tạo 2 phương án kịch bản video sản phẩm bằng ${input.language === 'en' ? 'Tiếng Anh' : 'Tiếng Việt'}, tổng thời lượng mỗi phương án đúng ${input.durationSec} giây, mỗi phương án gồm khoảng ${sceneCount} phân cảnh.`,
@@ -536,7 +536,7 @@ async function generateScriptsWithGeminiApi(input: {
       }, required: ['sortOrder','durationSec','narration','onScreenText','motionType','transitionType','lightingEffect','visualPrompt','musicMood'] } },
     }, required: ['variantName','hookSummary','ctaText','scenes'] },
   };
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify({
@@ -580,7 +580,7 @@ async function generateScriptsWithGeminiApi(input: {
     });
     return { variantName:String(variant.variantName||`Phương án ${variantIndex+1}`), hookSummary:String(variant.hookSummary||''), ctaText:String(variant.ctaText||'Khám phá ngay'), scenes };
   });
-  return { mode:'gemini' as const, model:'gemini-3.8-flash', variants };
+  return { mode:'gemini' as const, model:modelName, variants };
 }
 
 async function uploadToImageKit(
@@ -1340,34 +1340,60 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
       let result: unknown;
       let useGemini = false;
-      if (modCfg?.is_enabled && env.GEMINI_API_KEY) {
-        try { useGemini = await aiModuleWithinLimits(env, modCfg); }
-        catch (limitError) { console.warn('Gemini usage-limit check unavailable; using safe free fallback:', limitError); }
-      }
-      if (useGemini && env.GEMINI_API_KEY) {
+      let fallbackReason = '';
+      if (!modCfg) {
+        fallbackReason = 'Chưa tìm thấy cấu hình mô-đun Gemini Viết kịch bản.';
+      } else if (!modCfg.is_enabled) {
+        fallbackReason = 'Mô-đun Gemini Viết kịch bản đang tắt trong phần Quản trị AI.';
+      } else if (!env.GEMINI_API_KEY) {
+        fallbackReason = 'Máy chủ chưa được cấu hình GEMINI_API_KEY.';
+      } else {
         try {
-          result = env.AI_CALLER?.generateScripts
+          useGemini = await aiModuleWithinLimits(env, modCfg);
+          if (!useGemini) fallbackReason = 'Mô-đun Gemini đã đạt hạn mức sử dụng ngày hoặc tháng; hệ thống chuyển sang tạo kịch bản dự phòng.';
+        } catch (limitError) {
+          fallbackReason = limitError instanceof Error ? limitError.message : 'Không kiểm tra được hạn mức Gemini.';
+          console.warn('Gemini usage-limit check unavailable; using safe free fallback:', limitError);
+        }
+      }
+
+      if (useGemini && env.GEMINI_API_KEY) {
+        const modelName = (str(modCfg?.model_name) || 'gemini-3.8-flash').replace(/^models\\//, '');
+        try {
+          const generated = env.AI_CALLER?.generateScripts
             ? await env.AI_CALLER.generateScripts(inputPayload)
-            : await generateScriptsWithGeminiApi(inputPayload, env.GEMINI_API_KEY);
-          await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', modCfg?.model_name || 'gemini-3.8-flash', 'generate-script', 'SUCCESS', 900, 0)
+            : await generateScriptsWithGeminiApi(inputPayload, env.GEMINI_API_KEY, modelName);
+          const generatedVariants = generated && typeof generated === 'object'
+            ? (generated as { variants?: Array<{ scenes?: unknown[] }> }).variants
+            : undefined;
+          if (!Array.isArray(generatedVariants) || generatedVariants.length === 0 ||
+              !generatedVariants.some(variant => Array.isArray(variant.scenes) && variant.scenes.length > 0)) {
+            throw new Error('Gemini không trả về phương án kịch bản có phân cảnh hợp lệ.');
+          }
+          result = generated;
+          await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', modelName, 'generate-script', 'SUCCESS', 900, 0)
             .catch(logError => console.warn('Could not record successful Gemini usage:', logError));
           await env.DB.prepare("UPDATE ai_configs SET last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
             .bind(new Date().toISOString()).run().catch(configError => console.warn('Could not update Gemini script status:', configError));
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Gemini script error';
+          fallbackReason = msg;
           console.error('Gemini script generation failed; using structured fallback:', msg);
-          await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', modCfg?.model_name || 'gemini-3.8-flash', 'generate-script', 'FALLBACK', 0, 0, msg)
+          await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', modelName, 'generate-script', 'FALLBACK', 0, 0, msg)
             .catch(logError => console.warn('Could not record Gemini fallback:', logError));
           await env.DB.prepare("UPDATE ai_configs SET last_status='ERROR',last_error=?,updated_at=? WHERE module_key='gemini_script'")
             .bind(msg.slice(0,300),new Date().toISOString()).run().catch(configError => console.warn('Could not update Gemini error status:',configError));
           result = buildStructuredFreeScripts(inputPayload);
         }
       } else {
-        await logAiUsage(env,actor.id,'gemini_script','rule-based-free','structured-free','generate-script','FALLBACK',0,0)
+        await logAiUsage(env,actor.id,'gemini_script','rule-based-free','structured-free','generate-script','FALLBACK',0,0, fallbackReason)
           .catch(logError => console.warn('Could not record structured script usage:',logError));
         result = buildStructuredFreeScripts(inputPayload);
       }
-      return json(result);
+      return json({
+        ...(result as Record<string, unknown>),
+        ...(fallbackReason ? { fallbackReason } : {}),
+      });
     }
 
     if (path === '/api/ai/scene-assist' && request.method === 'POST') {

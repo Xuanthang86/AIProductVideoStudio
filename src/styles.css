@@ -3240,3 +3240,98 @@ main,
 .kpi-status.active { background:#e8f7ef; color:#19724b; } .kpi-status.active b { color:#12613d; }
 .kpi-status.locked { background:#fff0ef; color:#a53c37; } .kpi-status.locked b { color:#8f2f2a; }
 @media (max-width:680px) { .confirm-dialog { padding:18px; } .confirm-dialog-actions { display:grid; grid-template-columns:1fr 1fr; } .kpi-status-row { gap:6px; } .kpi-status { font-size:11px; } }
+
+
+/* Scene-specific image upload: keep the native picker visible and touch-friendly. */
+.scene-image-upload { min-width: 0; align-content: start; gap: 8px; }
+.scene-image-file-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: #f7faff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+.scene-image-file-input::file-selector-button {
+  margin: 0 9px 0 0;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: #e3edff;
+  color: #173f83;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.scene-image-file-input:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Compact, expandable catalog management. */
+.catalog-management-card { display: grid; gap: 12px; }
+.catalog-disclosure { border: 1px solid var(--line); border-radius: 11px; background: #f8faff; overflow: hidden; }
+.catalog-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 10px 13px;
+  color: #203d6b;
+  font-size: 14px;
+  font-weight: 750;
+  list-style: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.catalog-disclosure > summary::-webkit-details-marker { display: none; }
+.catalog-disclosure > summary svg:last-child { margin-left: auto; color: #687b98; transition: transform .18s ease; }
+.catalog-disclosure[open] > summary { border-bottom: 1px solid var(--line); background: #f0f5ff; }
+.catalog-disclosure[open] > summary svg:last-child { transform: rotate(180deg); }
+.catalog-disclosure-content { margin: 0; padding: 12px; }
+.catalog-disclosure-content.catalog-edit-list { padding: 12px; }
+.catalog-disclosure .search-box input { min-width: 0; }
+
+/* Dashboard KPI cards: clear hierarchy, spacing and status chips across devices. */
+.kpi-grid-enhanced { align-items: stretch; gap: 16px; }
+.kpi-card-enhanced {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 13px;
+  min-width: 0;
+  min-height: 176px;
+  padding: 19px 20px;
+  border: 1px solid #dce5f2;
+  border-radius: 15px;
+  background: linear-gradient(145deg,#fff 0%,#f7faff 100%);
+  box-shadow: 0 8px 24px rgba(23,48,88,.07);
+}
+.kpi-card-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.kpi-card-heading > small { display:inline-flex; align-items:center; gap:7px; color:#405574; font-size:13px; font-weight:800; letter-spacing:.01em; }
+.kpi-card-heading > small svg { color:#426da8; }
+.kpi-icon { display:grid; place-items:center; width:36px; height:36px; flex:0 0 36px; border-radius:11px; background:#eaf1ff; color:#2456a0; }
+.kpi-value-row { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px; }
+.kpi-card-enhanced .kpi-value-row > strong { display:block; color:#15366d; font-size:clamp(34px,3vw,42px); line-height:1; font-weight:850; letter-spacing:-.04em; }
+.kpi-value-row > span { color:#71819a; font-size:12px; font-weight:650; }
+.kpi-card-enhanced .kpi-status-row { display:flex; flex-wrap:wrap; gap:7px; margin-top:auto; }
+.kpi-card-enhanced .kpi-status { gap:6px; padding:7px 10px; font-size:11.5px; line-height:1.2; }
+.kpi-card-enhanced .kpi-status b { font-size:13px; }
+.kpi-detail-row { display:flex; margin-top:auto; }
+.kpi-detail-chip { display:inline-flex; align-items:center; min-height:30px; padding:6px 10px; border-radius:9px; background:#eaf1ff; color:#365783; font-size:11.5px; font-weight:650; }
+.kpi-card-products { border-color:#d5e7df; background:linear-gradient(145deg,#fff 0%,#f1faf5 100%); }
+.kpi-card-products .kpi-icon { background:#e1f4e9; color:#238052; }
+.kpi-card-projects { border-color:#d9def4; background:linear-gradient(145deg,#fff 0%,#f4f5ff 100%); }
+.kpi-card-projects .kpi-icon { background:#e9eaff; color:#4d54a5; }
+.kpi-card-activity { border-color:#f0e2c9; background:linear-gradient(145deg,#fff 0%,#fff9ed 100%); }
+.kpi-card-activity .kpi-icon { background:#fff0d5; color:#a56b13; }
+.kpi-card-users { border-color:#c9d9f4; background:linear-gradient(145deg,#fff 0%,#f1f6ff 100%); }
+@media (max-width:680px) {
+  .kpi-grid-enhanced { gap:11px; }
+  .kpi-card-enhanced { min-height:0; padding:16px; gap:11px; }
+  .kpi-card-enhanced .kpi-value-row > strong { font-size:36px; }
+  .catalog-disclosure > summary { min-height:48px; padding:11px; font-size:13.5px; }
+  .scene-image-file-input { font-size:12px; }
+}

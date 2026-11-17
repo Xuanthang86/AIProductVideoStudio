@@ -148,7 +148,7 @@ export default function StudioPage({
   const [sceneRenderingIndex, setSceneRenderingIndex] = useState<number | null>(null);
   const [sceneRenderProgress, setSceneRenderProgress] = useState(0);
   const [deleteSceneIndex, setDeleteSceneIndex] = useState<number | null>(null);
-  const sceneFileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const [imageCacheRevision, setImageCacheRevision] = useState(0);
 
   // MP4 Render state
   const [resolution, setResolution] = useState<RenderResolution>('720p');
@@ -221,9 +221,11 @@ export default function StudioPage({
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         loadedImgCacheRef.current.set(s.imageUrl, img);
+        setImageCacheRevision(revision => revision + 1);
       };
       img.onerror = () => {
         loadedImgCacheRef.current.set(s.imageUrl, null);
+        setImageCacheRevision(revision => revision + 1);
       };
       img.src = s.imageUrl;
     }
@@ -286,7 +288,7 @@ export default function StudioPage({
       productName: activeScene.productName || selectedProduct?.name || title,
       ctaText,
     });
-  }, [previewTime, scenes, aspectRatio, ctaText, selectedProduct, title]);
+  }, [previewTime, scenes, aspectRatio, ctaText, selectedProduct, title, imageCacheRevision]);
 
   // Playback timer
   useEffect(() => {
@@ -335,9 +337,10 @@ export default function StudioPage({
     }
     setScriptBusy(true);
     setError('');
-    setScriptNote('');
+    setMessage('');
+    setScriptNote('Đang kiểm tra cấu hình và tạo kịch bản...');
     try {
-      const res = await api<{ mode: string; model: string; variants: ScriptVariant[] }>('/api/ai/generate-script', 'POST', {
+      const res = await api<{ mode: string; model: string; variants: ScriptVariant[]; fallbackReason?: string }>('/api/ai/generate-script', 'POST', {
         productId,
         videoType,
         targetAudience,
@@ -345,15 +348,17 @@ export default function StudioPage({
         durationSec,
         language,
       });
-      setVariants(res.variants || []);
+      const generatedVariants = Array.isArray(res.variants)
+        ? res.variants.filter(variant => Array.isArray(variant.scenes) && variant.scenes.length > 0)
+        : [];
+      if (generatedVariants.length === 0) throw new Error('Máy chủ chưa trả về kịch bản có phân cảnh. Vui lòng thử lại hoặc kiểm tra cấu hình Gemini trong Quản trị AI.');
+      setVariants(generatedVariants);
       setActiveVariantIdx(0);
-      if (res.variants?.[0]) {
-        applyVariant(res.variants[0], selectedProduct);
-      }
+      applyVariant(generatedVariants[0], selectedProduct);
       setScriptNote(
         res.mode === 'gemini'
-          ? `Đã tạo ${res.variants.length} phương án kịch bản bằng Gemini (${res.model}).`
-          : `Đã tạo ${res.variants.length} phương án kịch bản theo chế độ cấu trúc miễn phí (chưa cấu hình Gemini API). Bạn có thể tùy chỉnh từng phân cảnh.`
+          ? `Đã tạo ${generatedVariants.length} phương án kịch bản bằng Gemini (${res.model}).`
+          : `Đã tạo ${generatedVariants.length} phương án kịch bản dự phòng. ${res.fallbackReason || 'Bạn có thể tùy chỉnh từng phân cảnh.'}`
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Không thể tạo kịch bản.');
@@ -1101,16 +1106,12 @@ export default function StudioPage({
                     </label>
 
                     <div className="form-grid-4">
-                      <label className="field-label">
-                        Tải ảnh riêng cho cảnh
-                        <button type="button" className="secondary-btn"
-                          disabled={uploadingSceneIndex !== null || !(scene.productId || productId)}
-                          onClick={() => sceneFileInputRefs.current[idx]?.click()}>
-                          <Plus size={14} /> {uploadingSceneIndex === idx ? 'Đang tải ảnh...' : 'Chọn ảnh từ thiết bị'}
-                        </button>
+                      <div className="field-label scene-image-upload">
+                        <span>Tải ảnh riêng cho cảnh</span>
                         <input
-                          ref={node => { sceneFileInputRefs.current[idx] = node; }}
-                          type="file" accept="image/jpeg,image/png,image/webp" hidden
+                          className="scene-image-file-input"
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
                           disabled={uploadingSceneIndex !== null || !(scene.productId || productId)}
                           onChange={e => {
                             const input = e.currentTarget;
@@ -1119,8 +1120,8 @@ export default function StudioPage({
                             if (file) void uploadSceneImage(idx, file);
                           }}
                         />
-                        <small className="muted-copy">{uploadingSceneIndex === idx ? 'Đang tải ảnh lên...' : 'JPG, PNG hoặc WEBP · tối đa 5MB'}</small>
-                      </label>
+                        <small className="muted-copy">{uploadingSceneIndex === idx ? 'Đang tải ảnh lên...' : 'Chọn trực tiếp tệp JPG, PNG hoặc WEBP · tối đa 5MB'}</small>
+                      </div>
                       <label className="field-label">
                         Hình ảnh cảnh
                         <select
