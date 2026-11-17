@@ -370,8 +370,50 @@ export default function StudioPage({
           : `Đã tạo ${generatedVariants.length} phương án kịch bản dự phòng. ${res.fallbackReason || 'Bạn có thể tùy chỉnh từng phân cảnh.'}`
       );
     } catch (e) {
-      setScriptNote('');
-      setError(e instanceof Error ? e.message : 'Không thể tạo kịch bản.');
+      const reason = e instanceof Error ? e.message : 'Dịch vụ tạo kịch bản không phản hồi.';
+      const fallbackProduct = products.find(product => product.id === productId) || selectedProduct;
+      if (fallbackProduct) {
+        const sceneCount = durationSec <= 15 ? 3 : durationSec <= 30 ? 4 : durationSec <= 45 ? 5 : 6;
+        const sceneDuration = Number((durationSec / sceneCount).toFixed(1));
+        const points = fallbackProduct.highlights.length ? fallbackProduct.highlights : [fallbackProduct.description || fallbackProduct.name];
+        const motions: MotionType[] = ['zoom-in', 'pan-left', 'parallax', 'zoom-out', 'pan-right', 'rotate-showcase'];
+        const transitions: TransitionType[] = ['fade', 'slide', 'zoom-cut'];
+        const lights: LightingEffect[] = ['studio-glow', 'warm-gold', 'clean', 'neon-rim'];
+        const localVariants: ScriptVariant[] = [0, 1].map(variantIndex => ({
+          variantName: variantIndex === 0 ? 'Kịch bản dự phòng: Giới thiệu trực diện' : 'Kịch bản dự phòng: Gợi mở nhu cầu',
+          hookSummary: variantIndex === 0 ? 'Giới thiệu sản phẩm và các điểm nổi bật đã cung cấp.' : 'Mở đầu bằng nhu cầu khách hàng, sau đó giới thiệu thông tin sản phẩm.',
+          ctaText: ctaText || 'Khám phá ngay',
+          scenes: Array.from({ length: sceneCount }, (_, index) => {
+            const point = points[index % points.length];
+            const isFirst = index === 0;
+            const isLast = index === sceneCount - 1;
+            return {
+              productId: fallbackProduct.id,
+              productName: fallbackProduct.name,
+              sortOrder: index,
+              durationSec: isLast ? Number((durationSec - sceneDuration * (sceneCount - 1)).toFixed(1)) : sceneDuration,
+              narration: isFirst
+                ? (variantIndex === 0 ? 'Giới thiệu ' + fallbackProduct.name + (fallbackProduct.brand ? ' từ ' + fallbackProduct.brand : '') + '.' : 'Bạn đang tìm hiểu ' + fallbackProduct.name + '? Hãy cùng xem những điểm nổi bật.')
+                : isLast ? 'Tìm hiểu thêm về ' + fallbackProduct.name + ' ngay hôm nay.' : 'Điểm nổi bật của sản phẩm: ' + point + '.',
+              onScreenText: isFirst ? fallbackProduct.name : isLast ? (ctaText || 'Khám phá ngay') : String(point).slice(0, 64),
+              imageId: fallbackProduct.images[index % Math.max(1, fallbackProduct.images.length)]?.id || null,
+              motionType: motions[(index + variantIndex) % motions.length],
+              transitionType: transitions[(index + variantIndex) % transitions.length],
+              lightingEffect: lights[(index + variantIndex) % lights.length],
+              visualPrompt: 'Giới thiệu ' + fallbackProduct.name + '; chỉ sử dụng thông tin do người dùng cung cấp: ' + point + '.',
+              musicMood: musicConfig.mood,
+            };
+          }),
+        }));
+        setVariants(localVariants);
+        setActiveVariantIdx(0);
+        applyVariant(localVariants[0], fallbackProduct);
+        setError('');
+        setScriptNote('Dịch vụ AI chưa phản hồi. Đã tạo 02 kịch bản dự phòng để bạn tiếp tục chỉnh sửa. Nguyên nhân: ' + reason.slice(0, 180));
+      } else {
+        setScriptNote('');
+        setError(reason);
+      }
     } finally {
       setScriptBusy(false);
     }
