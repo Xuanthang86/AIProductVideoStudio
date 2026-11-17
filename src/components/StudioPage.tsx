@@ -1161,9 +1161,10 @@ export default function StudioPage({
                       <div className="field-label scene-image-upload">
                         <span>Tải ảnh riêng cho cảnh</span>
                         <input
+                          ref={element => { sceneImageInputRefs.current[idx] = element; }}
                           className="scene-image-file-input"
                           type="file"
-                          accept="image/jpeg,image/png,image/webp"
+                          accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
                           disabled={uploadingSceneIndex !== null || !(scene.productId || productId)}
                           onChange={e => {
                             const input = e.currentTarget;
@@ -1172,7 +1173,10 @@ export default function StudioPage({
                             if (file) void uploadSceneImage(idx, file);
                           }}
                         />
-                        <small className="muted-copy">{uploadingSceneIndex === idx ? 'Đang tải ảnh lên...' : 'Chọn trực tiếp tệp JPG, PNG hoặc WEBP · tối đa 5MB'}</small>
+                        <button type="button" className="scene-image-picker-btn" disabled={uploadingSceneIndex !== null || !(scene.productId || productId)} onClick={() => sceneImageInputRefs.current[idx]?.click()}>
+                          Chọn tệp ảnh
+                        </button>
+                        <small className="muted-copy">{uploadingSceneIndex === idx ? 'Đang tải ảnh lên...' : 'JPG, PNG hoặc WEBP · tối đa 5MB. Ảnh sẽ hiển thị trong bản xem trước.'}</small>
                       </div>
                       <label className="field-label">
                         Hình ảnh cảnh
