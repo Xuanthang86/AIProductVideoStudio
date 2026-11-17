@@ -327,6 +327,8 @@ export default function StudioPage({
       return {
         ...s,
         sortOrder: i,
+        productId: prod?.id || productId || null,
+        productName: prod?.name || title,
         imageId: img?.id || null,
         imageUrl: img?.imageUrl || '',
         sourceType: 'REAL_PRODUCT',
