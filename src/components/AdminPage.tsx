@@ -162,6 +162,7 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
       setMessage('Đã thực hiện thao tác quản trị tài khoản.');
       await loadTab('users');
     } catch (e) {
+      if (verb === 'delete') setDeleteTarget(null);
       setError(e instanceof Error ? e.message : 'Thao tác thất bại.');
     } finally {
       setBusy(false);
@@ -266,6 +267,7 @@ export default function AdminPage({ actor, topics, onRefreshCatalog }: Props) {
       await loadTab('catalog');
       onRefreshCatalog();
     } catch (e) {
+      setDeleteTemplateTarget(null);
       setError(e instanceof Error ? e.message : 'Lỗi xóa mẫu.');
     } finally {
       setBusy(false);

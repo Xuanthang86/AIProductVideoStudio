@@ -37,6 +37,7 @@ export interface AICaller {
     durationSec: number;
     language: string;
     imageCount: number;
+    modelName?: string;
   }) => Promise<unknown>;
 }
 
@@ -508,6 +509,38 @@ function buildStructuredFreeScripts(input: {
   };
 }
 
+function normalizeSceneDurations(rawScenes: Array<Record<string, unknown>>, targetTotalSec: number) {
+  const sourceScenes = rawScenes.slice(0, 12);
+  const count = sourceScenes.length;
+  const safeTotal = Math.max(count, targetTotalSec);
+  const weights = sourceScenes.map(scene => {
+    const value = Number(scene.durationSec);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  });
+  const weightTotal = weights.reduce((sum, value) => sum + value, 0) || count;
+  const durations: number[] = [];
+  let remaining = safeTotal;
+  for (let i = 0; i < count; i++) {
+    const scenesLeftAfterThis = count - 1 - i;
+    if (i === count - 1) {
+      durations.push(Number(Math.max(1, remaining).toFixed(1)));
+    } else {
+      const ideal = Number(((safeTotal * weights[i]) / weightTotal).toFixed(1));
+      const maxAllowedForThis = Number((remaining - scenesLeftAfterThis).toFixed(1));
+      const clamped = Math.max(1, Math.min(ideal, maxAllowedForThis));
+      durations.push(Number(clamped.toFixed(1)));
+      remaining = Number((remaining - clamped).toFixed(1));
+    }
+  }
+  return { sourceScenes, durations };
+}
+
+function stripJsonFences(text: string): string {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1].trim() : trimmed;
+}
+
 async function generateScriptsWithGeminiApi(input: {
   productName: string; brand: string; industry: string; description: string; highlights: string[];
   videoType: string; targetAudience: string; style: string; durationSec: number; language: string;
@@ -536,42 +569,59 @@ async function generateScriptsWithGeminiApi(input: {
       }, required: ['sortOrder','durationSec','narration','onScreenText','motionType','transitionType','lightingEffect','visualPrompt','musicMood'] } },
     }, required: ['variantName','hookSummary','ctaText','scenes'] },
   };
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: 'Bạn là biên kịch video quảng cáo sản phẩm chuyên nghiệp. Viết kịch bản trung thực, súc tích, có tính thương mại nhưng không phóng đại hoặc bịa đặt dữ kiện.' }] },
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json', responseSchema, temperature: 0.7 },
-    }),
-    signal: AbortSignal.timeout(45000),
-  });
-  const payload = await response.json() as {
+  let response: Response;
+  try {
+    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: 'Bạn là biên kịch video quảng cáo sản phẩm chuyên nghiệp. Viết kịch bản trung thực, súc tích, có tính thương mại nhưng không phóng đại hoặc bịa đặt dữ kiện.' }] },
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', responseSchema, temperature: 0.7 },
+      }),
+      signal: AbortSignal.timeout(45000),
+    });
+  } catch (fetchErr) {
+    if (fetchErr instanceof Error && (fetchErr.name === 'AbortError' || fetchErr.name === 'TimeoutError')) {
+      throw new Error('Hết thời gian chờ phản hồi từ Gemini API.');
+    }
+    throw new Error(fetchErr instanceof Error ? fetchErr.message : 'Không kết nối được tới Gemini API.');
+  }
+  const rawBody = await response.text();
+  const payload = safeJsonParse<{
     error?: { message?: string };
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  if (!response.ok) throw new Error(payload.error?.message || `Gemini API trả về HTTP ${response.status}.`);
-  const responseText = payload.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim();
+  } | null>(rawBody, null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Gemini API trả về HTTP ${response.status}.`);
+  }
+  const responseText = payload?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim() || '';
   if (!responseText) throw new Error('Gemini không trả về nội dung kịch bản.');
-  const parsed = JSON.parse(responseText) as Array<{ variantName?: string; hookSummary?: string; ctaText?: string; scenes?: Array<Record<string, unknown>> }>;
+  let parsedRaw: unknown;
+  try {
+    parsedRaw = JSON.parse(stripJsonFences(responseText));
+  } catch {
+    throw new Error('Gemini trả về JSON kịch bản không đúng định dạng.');
+  }
+  const parsed = Array.isArray(parsedRaw)
+    ? parsedRaw
+    : parsedRaw && typeof parsedRaw === 'object' && Array.isArray((parsedRaw as { variants?: unknown[] }).variants)
+      ? (parsedRaw as { variants: unknown[] }).variants
+      : null;
   if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Cấu trúc kịch bản Gemini trả về không hợp lệ.');
   const allowedMotion = ['zoom-in','zoom-out','pan-left','pan-right','parallax','rotate-showcase'];
   const allowedTransition = ['fade','slide','zoom-cut'];
   const allowedLighting = ['studio-glow','warm-gold','neon-rim','clean'];
-  const variants = parsed.slice(0,2).map((variant, variantIndex) => {
+  const variants = parsed.slice(0,2).map((rawVariant, variantIndex) => {
+    const variant = (rawVariant && typeof rawVariant === 'object' ? rawVariant : {}) as {
+      variantName?: string; hookSummary?: string; ctaText?: string; scenes?: Array<Record<string, unknown>>;
+    };
     if (!Array.isArray(variant.scenes) || variant.scenes.length === 0) throw new Error(`Phương án ${variantIndex + 1} không có phân cảnh.`);
-    const sourceScenes = variant.scenes.slice(0,12);
-    const weights = sourceScenes.map(scene => { const value=Number(scene.durationSec); return Number.isFinite(value)&&value>0?value:1; });
-    const weightTotal = weights.reduce((sum,value)=>sum+value,0);
-    let allocated=0;
+    const { sourceScenes, durations } = normalizeSceneDurations(variant.scenes, input.durationSec);
     const scenes = sourceScenes.map((scene,index) => {
-      const durationSec = index===sourceScenes.length-1
-        ? Number((input.durationSec-allocated).toFixed(1))
-        : Number((input.durationSec*weights[index]/weightTotal).toFixed(1));
-      allocated += durationSec;
       const motion=String(scene.motionType||''), transition=String(scene.transitionType||''), lighting=String(scene.lightingEffect||'');
       return {
-        sortOrder:index, durationSec, narration:String(scene.narration||''), onScreenText:String(scene.onScreenText||''),
+        sortOrder:index, durationSec: durations[index], narration:String(scene.narration||''), onScreenText:String(scene.onScreenText||''),
         motionType:allowedMotion.includes(motion)?motion:'zoom-in',
         transitionType:allowedTransition.includes(transition)?transition:'fade',
         lightingEffect:allowedLighting.includes(lighting)?lighting:'studio-glow',
@@ -1057,18 +1107,25 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
       const data = await body(request);
       const fileName = str(data.fileName) || 'product-image.jpg';
-      const mimeType = str(data.mimeType).toLowerCase();
+      const rawMime = str(data.mimeType).toLowerCase();
+      const fileExt = fileName.toLowerCase().split('.').pop() || '';
+      const extToMime: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+      const mimeType = rawMime === 'image/jpg'
+        ? 'image/jpeg'
+        : ['image/jpeg', 'image/png', 'image/webp'].includes(rawMime)
+          ? rawMime
+          : (!rawMime || rawMime === 'application/octet-stream' || rawMime === 'image/*' ? (extToMime[fileExt] || '') : rawMime);
       const base64Raw = str(data.base64);
       const width = num(data.width, 0) || null;
       const height = num(data.height, 0) || null;
-      const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+      const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
       if (!allowedMimes.includes(mimeType)) {
         return fail('Chỉ hỗ trợ ảnh định dạng JPG, JPEG, PNG hoặc WEBP.');
       }
       const cleanBase64 = base64Raw.includes(',') ? base64Raw.split(',')[1] : base64Raw;
       if (!cleanBase64) return fail('Dữ liệu ảnh không hợp lệ.');
       const approxBytes = Math.floor((cleanBase64.length * 3) / 4);
-      if (approxBytes > 5 * 1024 * 1024) {
+      if (approxBytes <= 0 || approxBytes > 5 * 1024 * 1024) {
         return fail('Dung lượng ảnh vượt quá giới hạn 5MB.');
       }
 
@@ -1301,6 +1358,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (path === '/api/ai/generate-script' && request.method === 'POST') {
       const data = await body(request);
       const productId = str(data.productId);
+      if (!productId) return fail('Vui lòng chọn sản phẩm trước khi tạo kịch bản.', 400);
       const videoType = str(data.videoType) || 'Advertisement';
       const targetAudience = str(data.targetAudience) || '';
       const style = str(data.style) || 'Hiện đại, chuyên nghiệp';
@@ -1345,6 +1403,8 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         fallbackReason = 'Chưa tìm thấy cấu hình mô-đun Gemini Viết kịch bản.';
       } else if (!modCfg.is_enabled) {
         fallbackReason = 'Mô-đun Gemini Viết kịch bản đang tắt trong phần Quản trị AI.';
+      } else if (modCfg.is_paid) {
+        fallbackReason = 'Mô-đun Gemini Viết kịch bản đang gắn cờ trả phí; hệ thống sử dụng kịch bản cấu trúc miễn phí.';
       } else if (!env.GEMINI_API_KEY) {
         fallbackReason = 'Máy chủ chưa được cấu hình GEMINI_API_KEY.';
       } else {
@@ -1362,7 +1422,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         const modelName = configuredModel.startsWith('models/') ? configuredModel.slice('models/'.length) : configuredModel;
         try {
           const generated = env.AI_CALLER?.generateScripts
-            ? await env.AI_CALLER.generateScripts(inputPayload)
+            ? await env.AI_CALLER.generateScripts({ ...inputPayload, modelName })
             : await generateScriptsWithGeminiApi(inputPayload, env.GEMINI_API_KEY, modelName);
           const generatedVariants = generated && typeof generated === 'object'
             ? (generated as { variants?: Array<{ scenes?: unknown[] }> }).variants
@@ -2327,7 +2387,13 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           ]);
         }
 
-        await audit(env, actor.id, targetId, 'ADMIN_' + action.toUpperCase(), { targetEmail: target.email });
+        await audit(
+          env,
+          actor.id,
+          action === 'delete' ? null : targetId,
+          'ADMIN_' + action.toUpperCase(),
+          { targetEmail: target.email, ...(action === 'delete' ? { deletedUserId: targetId } : {}) }
+        );
         return json({ message: 'Đã thực hiện thao tác quản trị.' });
       }
 

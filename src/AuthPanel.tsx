@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight, Ban, Check, ChevronDown, KeyRound, LogIn, LogOut, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
+import ConfirmDialog from './components/ConfirmDialog';
 import PasswordInput from './components/PasswordInput';
 import { api, roleLabel, statusLabel } from './lib/api';
 import type { User, UserQuota, UserUsage } from './types';
@@ -99,6 +100,7 @@ export default function AuthPanel({
     }
     setMode(initialMode === 'account' ? 'login' : initialMode);
     setPassword(initialMode === 'register' ? '' : getRememberedPassword());
+    if (currentUser === undefined) return;
     api<{ user: User | null; quota?: UserQuota; usage?: UserUsage }>('/api/auth/me')
       .then(r => {
         if (r.user) {
@@ -213,12 +215,15 @@ export default function AuthPanel({
 
   const action = (id: string, verb: string, data?: unknown) =>
     run(async () => {
-      await api(`/api/admin/users/${id}/${verb}`, 'POST', data || {});
-      await loadUsers();
-      setResetTarget(null);
-      setResetPassValue('');
-      setDeleteTarget(null);
-      setMessage('Đã cập nhật tài khoản.');
+      try {
+        await api(`/api/admin/users/${id}/${verb}`, 'POST', data || {});
+        await loadUsers();
+        setResetTarget(null);
+        setResetPassValue('');
+        setMessage('Đã cập nhật tài khoản.');
+      } finally {
+        if (verb === 'delete') setDeleteTarget(null);
+      }
     });
 
   const createManagedUser = () =>
@@ -697,19 +702,14 @@ export default function AuthPanel({
               )}
 
               {deleteTarget && (
-                <div className="inline-confirm-box danger">
-                  <p>
-                    Xác nhận xóa vĩnh viễn tài khoản <b>{deleteTarget.email}</b>?
-                  </p>
-                  <div className="inline-confirm-actions">
-                    <button type="button" className="auth-logout" onClick={() => action(deleteTarget.id, 'delete')}>
-                      Xác nhận xóa
-                    </button>
-                    <button type="button" className="auth-secondary" onClick={() => setDeleteTarget(null)}>
-                      Hủy
-                    </button>
-                  </div>
-                </div>
+                <ConfirmDialog
+                  title="Xóa tài khoản?"
+                  message={`Bạn có chắc chắn muốn xóa vĩnh viễn tài khoản “${deleteTarget.email}” cùng dữ liệu liên quan không? Thao tác này không thể hoàn tác.`}
+                  confirmLabel="Xác nhận xóa"
+                  busy={busy}
+                  onCancel={() => { if (!busy) setDeleteTarget(null); }}
+                  onConfirm={() => void action(deleteTarget.id, 'delete')}
+                />
               )}
             </div>
           )}

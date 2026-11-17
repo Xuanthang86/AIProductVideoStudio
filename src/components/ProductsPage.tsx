@@ -160,7 +160,7 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
         const parsed = await readImageFile(file);
         await api(`/api/products/${product.id}/images`, 'POST', {
           fileName: file.name,
-          mimeType: file.type,
+          mimeType: parsed.mimeType || file.type,
           base64: parsed.base64,
           width: parsed.width,
           height: parsed.height,
@@ -540,12 +540,15 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
             : `Bạn có chắc chắn muốn xóa hình ảnh này khỏi sản phẩm “${pendingDelete.product.name}” không?`}
           confirmLabel={pendingDelete.kind === 'product' ? 'Xóa sản phẩm' : 'Xóa hình ảnh'}
           busy={busy}
-          onCancel={() => setPendingDelete(null)}
+          onCancel={() => { if (!busy) setPendingDelete(null); }}
           onConfirm={async () => {
             const target = pendingDelete;
-            setPendingDelete(null);
-            if (target.kind === 'product') await deleteProduct(target.product.id);
-            else if (target.imageId) await deleteImage(target.product, target.imageId);
+            try {
+              if (target.kind === 'product') await deleteProduct(target.product.id);
+              else if (target.imageId) await deleteImage(target.product, target.imageId);
+            } finally {
+              setPendingDelete(null);
+            }
           }}
         />
       )}

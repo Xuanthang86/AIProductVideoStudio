@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle } from 'lucide-react';
 
 interface Props {
@@ -10,7 +12,18 @@ interface Props {
 }
 
 export default function ConfirmDialog({ title, message, confirmLabel = 'Xác nhận xóa', busy = false, onCancel, onConfirm }: Props) {
-  return (
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !busy) {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [busy, onCancel]);
+
+  const dialog = (
     <div className="confirm-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onCancel(); }}>
       <section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-message">
         <h3 id="confirm-dialog-title"><AlertTriangle size={19} /> {title}</h3>
@@ -22,4 +35,6 @@ export default function ConfirmDialog({ title, message, confirmLabel = 'Xác nh�
       </section>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(dialog, document.body) : dialog;
 }

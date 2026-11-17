@@ -17,6 +17,7 @@ export default function MyVideosPage({ onEditProject, onNewVideo }: Props) {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<VideoProject | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -48,12 +49,18 @@ export default function MyVideosPage({ onEditProject, onNewVideo }: Props) {
   };
 
   const remove = async (id: string) => {
+    setDeleting(true);
+    setError('');
     try {
       await api(`/api/projects/${id}`, 'DELETE');
       setMessage('Đã xóa dự án video.');
+      setDeleteTarget(null);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Không thể xóa dự án.');
+    } finally {
+      setDeleteTarget(null);
+      setDeleting(false);
     }
   };
 
@@ -150,11 +157,13 @@ export default function MyVideosPage({ onEditProject, onNewVideo }: Props) {
         </div>
       )}
       {deleteTarget && (
-        <ConfirmDialog title="Xóa dự án video?"
+        <ConfirmDialog
+          title="Xóa dự án video?"
           message={`Bạn có chắc chắn muốn xóa dự án “${deleteTarget.title}” không? Các phân cảnh và bản duyệt liên quan cũng sẽ bị xóa.`}
           confirmLabel="Xóa dự án"
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={() => { const id = deleteTarget.id; setDeleteTarget(null); void remove(id); }}
+          busy={deleting}
+          onCancel={() => { if (!deleting) setDeleteTarget(null); }}
+          onConfirm={() => void remove(deleteTarget.id)}
         />
       )}
     </div>

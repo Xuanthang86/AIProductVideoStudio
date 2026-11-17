@@ -20,7 +20,7 @@ import {
   VolumeX,
   WandSparkles,
 } from 'lucide-react';
-import { api, formatBytes } from '../lib/api';
+import { api, formatBytes, normalizeImageMimeType } from '../lib/api';
 import {
   checkDeviceRenderSafety,
   drawSceneFrame,
@@ -131,8 +131,11 @@ export default function StudioPage({
   const [activeVariantIdx, setActiveVariantIdx] = useState(0);
   const [scenes, setScenes] = useState<VideoScene[]>([]);
 
+  const [productsLoading, setProductsLoading] = useState(true);
   const [scriptBusy, setScriptBusy] = useState(false);
   const [scriptNote, setScriptNote] = useState('');
+  const [scriptNoteType, setScriptNoteType] = useState<'info' | 'warning'>('info');
+  const [scriptError, setScriptError] = useState('');
   const [saving, setSaving] = useState(false);
   const [ttsNotice, setTtsNotice] = useState('');
   const [error, setError] = useState('');
@@ -151,7 +154,6 @@ export default function StudioPage({
   const [sceneRenderProgress, setSceneRenderProgress] = useState(0);
   const [deleteSceneIndex, setDeleteSceneIndex] = useState<number | null>(null);
   const [imageCacheRevision, setImageCacheRevision] = useState(0);
-  const sceneImageInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   // MP4 Render state
   const [resolution, setResolution] = useState<RenderResolution>('720p');
@@ -167,18 +169,50 @@ export default function StudioPage({
   const maxAllowedDuration = quota?.max_duration_sec || 60;
 
   useEffect(() => {
+    const valid = DURATIONS.filter(d => d <= maxAllowedDuration);
+    if (valid.length > 0 && !valid.includes(durationSec)) {
+      setDurationSec(valid[valid.length - 1]);
+    }
+  }, [maxAllowedDuration]);
+
+  useEffect(() => {
+    let active = true;
+    setProductsLoading(true);
     api<{ products: Product[] }>('/api/products')
       .then(res => {
-        setProducts(res.products);
-        if (!initialProductId && !initialProjectId && res.products.length > 0 && !productId) {
-          const first = res.products[0];
+        if (!active) return;
+        const list = res.products || [];
+        setProducts(list);
+        const requested = initialProductId ? list.find(p => p.id === initialProductId) : null;
+        if (requested && !initialProjectId) {
+          setProductId(requested.id);
+          setIndustry(requested.industry);
+          setTitle(`Video ${requested.name}`);
+        } else if (!initialProjectId && list.length > 0 && !productId) {
+          const first = list[0];
           setProductId(first.id);
           setIndustry(first.industry);
           setTitle(`Video ${first.name}`);
         }
       })
-      .catch(e => setError(e.message));
+      .catch(e => {
+        if (active) setError(e.message);
+      })
+      .finally(() => {
+        if (active) setProductsLoading(false);
+      });
+    return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!initialProductId || initialProjectId || products.length === 0) return;
+    const matched = products.find(p => p.id === initialProductId);
+    if (matched) {
+      setProductId(matched.id);
+      setIndustry(matched.industry);
+      setTitle(`Video ${matched.name}`);
+    }
+  }, [initialProductId, initialProjectId]);
 
   useEffect(() => {
     if (!initialProjectId) return;
@@ -222,21 +256,28 @@ export default function StudioPage({
 
   // Preload images for canvas preview
   useEffect(() => {
+    const urls = new Set<string>();
     for (const s of scenes) {
-      if (!s.imageUrl || loadedImgCacheRef.current.has(s.imageUrl)) continue;
+      if (s.imageUrl) urls.add(s.imageUrl);
+    }
+    const primaryUrl = selectedProduct?.images[0]?.imageUrl;
+    if (primaryUrl) urls.add(primaryUrl);
+
+    for (const url of urls) {
+      if (loadedImgCacheRef.current.has(url)) continue;
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
-        loadedImgCacheRef.current.set(s.imageUrl, img);
+        loadedImgCacheRef.current.set(url, img);
         setImageCacheRevision(revision => revision + 1);
       };
       img.onerror = () => {
-        loadedImgCacheRef.current.set(s.imageUrl, null);
+        loadedImgCacheRef.current.set(url, null);
         setImageCacheRevision(revision => revision + 1);
       };
-      img.src = s.imageUrl;
+      img.src = url;
     }
-  }, [scenes]);
+  }, [scenes, selectedProduct]);
 
   // Draw preview frame whenever previewTime, scenes, aspectRatio, or ctaText changes
   useEffect(() => {
@@ -336,84 +377,65 @@ export default function StudioPage({
     });
     setScenes(mapped);
     if (variant.ctaText) setCtaText(variant.ctaText);
+    setIsPlayingPreview(false);
     setPreviewTime(0);
   };
 
   const generateScripts = async () => {
-    if (!productId) {
-      setError('Vui lòng chọn hoặc tạo một sản phẩm trước khi tạo kịch bản.');
+    if (productsLoading) {
+      setScriptError('Đang tải danh sách sản phẩm, vui lòng đợi giây lát.');
       return;
     }
+    if (!productId) {
+      const msg = 'Vui lòng chọn hoặc tạo một sản phẩm ở mục 1 trước khi tạo kịch bản.';
+      setScriptError(msg);
+      setError(msg);
+      return;
+    }
+    const activeProduct = products.find(p => p.id === productId) || selectedProduct;
     setScriptBusy(true);
     setError('');
+    setScriptError('');
     setMessage('');
-    setScriptNote('Đang kiểm tra cấu hình và tạo kịch bản...');
+    setScriptNoteType('info');
+    setScriptNote('Đang kiểm tra cấu hình AI và tạo kịch bản...');
     try {
-      const res = await api<{ mode: string; model: string; variants: ScriptVariant[]; fallbackReason?: string }>('/api/ai/generate-script', 'POST', {
-        productId,
-        videoType,
-        targetAudience,
-        style,
-        durationSec,
-        language,
-      });
+      const res = await api<{ mode: string; model: string; variants: ScriptVariant[]; fallbackReason?: string }>(
+        '/api/ai/generate-script',
+        'POST',
+        {
+          productId,
+          videoType,
+          targetAudience,
+          style,
+          durationSec,
+          language,
+        },
+        { timeoutMs: 55000 }
+      );
       const generatedVariants = Array.isArray(res.variants)
         ? res.variants.filter(variant => Array.isArray(variant.scenes) && variant.scenes.length > 0)
         : [];
-      if (generatedVariants.length === 0) throw new Error('Máy chủ chưa trả về kịch bản có phân cảnh. Vui lòng thử lại hoặc kiểm tra cấu hình Gemini trong Quản trị AI.');
+      if (generatedVariants.length === 0) {
+        throw new Error('Máy chủ chưa trả về kịch bản có phân cảnh hợp lệ. Vui lòng thử lại hoặc kiểm tra cấu hình Gemini trong Quản trị AI.');
+      }
       setVariants(generatedVariants);
       setActiveVariantIdx(0);
-      applyVariant(generatedVariants[0], selectedProduct);
-      setScriptNote(
-        res.mode === 'gemini'
-          ? `Đã tạo ${generatedVariants.length} phương án kịch bản bằng Gemini (${res.model}).`
-          : `Đã tạo ${generatedVariants.length} phương án kịch bản dự phòng. ${res.fallbackReason || 'Bạn có thể tùy chỉnh từng phân cảnh.'}`
-      );
-    } catch (e) {
-      const reason = e instanceof Error ? e.message : 'Dịch vụ tạo kịch bản không phản hồi.';
-      const fallbackProduct = products.find(product => product.id === productId) || selectedProduct;
-      if (fallbackProduct) {
-        const sceneCount = durationSec <= 15 ? 3 : durationSec <= 30 ? 4 : durationSec <= 45 ? 5 : 6;
-        const sceneDuration = Number((durationSec / sceneCount).toFixed(1));
-        const points = fallbackProduct.highlights.length ? fallbackProduct.highlights : [fallbackProduct.description || fallbackProduct.name];
-        const motions: MotionType[] = ['zoom-in', 'pan-left', 'parallax', 'zoom-out', 'pan-right', 'rotate-showcase'];
-        const transitions: TransitionType[] = ['fade', 'slide', 'zoom-cut'];
-        const lights: LightingEffect[] = ['studio-glow', 'warm-gold', 'clean', 'neon-rim'];
-        const localVariants: ScriptVariant[] = [0, 1].map(variantIndex => ({
-          variantName: variantIndex === 0 ? 'Kịch bản dự phòng: Giới thiệu trực diện' : 'Kịch bản dự phòng: Gợi mở nhu cầu',
-          hookSummary: variantIndex === 0 ? 'Giới thiệu sản phẩm và các điểm nổi bật đã cung cấp.' : 'Mở đầu bằng nhu cầu khách hàng, sau đó giới thiệu thông tin sản phẩm.',
-          ctaText: ctaText || 'Khám phá ngay',
-          scenes: Array.from({ length: sceneCount }, (_, index) => {
-            const point = points[index % points.length];
-            const isFirst = index === 0;
-            const isLast = index === sceneCount - 1;
-            return {
-              productId: fallbackProduct.id,
-              productName: fallbackProduct.name,
-              sortOrder: index,
-              durationSec: isLast ? Number((durationSec - sceneDuration * (sceneCount - 1)).toFixed(1)) : sceneDuration,
-              narration: isFirst
-                ? (variantIndex === 0 ? 'Giới thiệu ' + fallbackProduct.name + (fallbackProduct.brand ? ' từ ' + fallbackProduct.brand : '') + '.' : 'Bạn đang tìm hiểu ' + fallbackProduct.name + '? Hãy cùng xem những điểm nổi bật.')
-                : isLast ? 'Tìm hiểu thêm về ' + fallbackProduct.name + ' ngay hôm nay.' : 'Điểm nổi bật của sản phẩm: ' + point + '.',
-              onScreenText: isFirst ? fallbackProduct.name : isLast ? (ctaText || 'Khám phá ngay') : String(point).slice(0, 64),
-              imageId: fallbackProduct.images[index % Math.max(1, fallbackProduct.images.length)]?.id || null,
-              motionType: motions[(index + variantIndex) % motions.length],
-              transitionType: transitions[(index + variantIndex) % transitions.length],
-              lightingEffect: lights[(index + variantIndex) % lights.length],
-              visualPrompt: 'Giới thiệu ' + fallbackProduct.name + '; chỉ sử dụng thông tin do người dùng cung cấp: ' + point + '.',
-              musicMood: musicConfig.mood,
-            };
-          }),
-        }));
-        setVariants(localVariants);
-        setActiveVariantIdx(0);
-        applyVariant(localVariants[0], fallbackProduct);
-        setError('');
-        setScriptNote('Dịch vụ AI chưa phản hồi. Đã tạo 02 kịch bản dự phòng để bạn tiếp tục chỉnh sửa. Nguyên nhân: ' + reason.slice(0, 180));
+      applyVariant(generatedVariants[0], activeProduct);
+      if (res.mode === 'gemini') {
+        setScriptNoteType('info');
+        setScriptNote(`Đã tạo ${generatedVariants.length} phương án kịch bản bằng Gemini (${res.model}).`);
       } else {
-        setScriptNote('');
-        setError(reason);
+        setScriptNoteType('warning');
+        setScriptNote(
+          `Đã tạo ${generatedVariants.length} phương án kịch bản cấu trúc miễn phí (dự phòng). ${res.fallbackReason || 'Bạn có thể tùy chỉnh từng phân cảnh.'}`
+        );
       }
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : 'Không thể tạo kịch bản từ máy chủ. Vui lòng thử lại.';
+      setScriptNote('');
+      setScriptError(reason);
+      setError(reason);
     } finally {
       setScriptBusy(false);
     }
@@ -449,12 +471,22 @@ export default function StudioPage({
   const uploadSceneImage = async (index: number, file?: File) => {
     if (!file) return;
     const sceneProductId = scenes[index]?.productId || productId;
-    if (!sceneProductId) { setError('Vui lòng chọn sản phẩm cho phân cảnh trước khi tải ảnh.'); return; }
-    const extension = file.name.toLowerCase().split('.').pop() || '';
-    const mimeType = file.type.toLowerCase() || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' } as Record<string, string>)[extension] || '';
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) { setError('Ảnh phân cảnh chỉ hỗ trợ JPG, PNG hoặc WEBP.'); return; }
-    if (file.size <= 0 || file.size > 5 * 1024 * 1024) { setError('Dung lượng ảnh mỗi phân cảnh phải lớn hơn 0 và tối đa 5MB.'); return; }
-    setUploadingSceneIndex(index); setError('');
+    if (!sceneProductId) {
+      setError('Vui lòng chọn sản phẩm cho phân cảnh trước khi tải ảnh.');
+      return;
+    }
+    const mimeType = normalizeImageMimeType(file);
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+      setError('Ảnh phân cảnh chỉ hỗ trợ JPG, JPEG, PNG hoặc WEBP.');
+      return;
+    }
+    if (file.size <= 0 || file.size > 5 * 1024 * 1024) {
+      setError('Dung lượng ảnh mỗi phân cảnh phải lớn hơn 0 và tối đa 5MB.');
+      return;
+    }
+    setUploadingSceneIndex(index);
+    setError('');
+    setMessage('');
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -462,21 +494,41 @@ export default function StudioPage({
         reader.onerror = () => reject(new Error('Không thể đọc tệp ảnh.'));
         reader.readAsDataURL(file);
       });
-      const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      const { imageElement, width, height } = await new Promise<{ imageElement: HTMLImageElement; width: number; height: number }>((resolve, reject) => {
         const image = new Image();
-        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onload = () => resolve({ imageElement: image, width: image.naturalWidth, height: image.naturalHeight });
         image.onerror = () => reject(new Error('Tệp tải lên không phải ảnh hợp lệ.'));
         image.src = dataUrl;
       });
       const response = await api<{ image: Product['images'][number] }>(`/api/products/${sceneProductId}/images`, 'POST', {
-        fileName: file.name, mimeType, base64: dataUrl, ...dimensions,
+        fileName: file.name || `scene-${index + 1}.jpg`,
+        mimeType,
+        base64: dataUrl,
+        width,
+        height,
       });
-      updateScene(index, { productId: sceneProductId, productName: products.find(p => p.id === sceneProductId)?.name || '', imageId: response.image.id, imageUrl: response.image.imageUrl, sourceType: 'REAL_PRODUCT' });
-      setProducts(prev => prev.map(product => product.id === sceneProductId ? { ...product, images: [...product.images, response.image] } : product));
+      const sceneProductName = products.find(p => p.id === sceneProductId)?.name || '';
+      loadedImgCacheRef.current.set(response.image.imageUrl, imageElement);
+      updateScene(index, {
+        productId: sceneProductId,
+        productName: sceneProductName,
+        imageId: response.image.id,
+        imageUrl: response.image.imageUrl,
+        sourceType: 'REAL_PRODUCT',
+      });
+      setProducts(prev => prev.map(product => (
+        product.id === sceneProductId ? { ...product, images: [...product.images, response.image] } : product
+      )));
+      const sceneStartTime = scenes.slice(0, index).reduce((sum, item) => sum + Math.max(0.5, item.durationSec), 0);
+      setIsPlayingPreview(false);
+      setPreviewTime(sceneStartTime);
+      setImageCacheRevision(revision => revision + 1);
       setMessage(`Đã tải ảnh riêng cho phân cảnh #${index + 1}.`);
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : 'Không thể tải ảnh phân cảnh.');
-    } finally { setUploadingSceneIndex(null); }
+    } finally {
+      setUploadingSceneIndex(null);
+    }
   };
 
   const assistScene = async (index: number) => {
@@ -871,7 +923,11 @@ export default function StudioPage({
         <div className="studio-editor-col">
           <section className="panel-card">
             <h3>1. Sản phẩm & Thông số video</h3>
-            {products.length === 0 ? (
+            {productsLoading ? (
+              <div className="empty-box compact">
+                <p>Đang tải danh sách sản phẩm...</p>
+              </div>
+            ) : products.length === 0 ? (
               <div className="empty-box compact">
                 <p>Bạn chưa có sản phẩm nào. Hãy tạo sản phẩm và tải ảnh trước khi dựng video.</p>
                 <button className="primary-btn" onClick={onGoProducts}>
@@ -1000,16 +1056,46 @@ export default function StudioPage({
                 <small className="muted-copy">Tạo nhiều phương án kịch bản, chỉnh sửa lời thoại, phụ đề, ảnh và chuyển động từng cảnh.</small>
               </div>
               <div className="btn-row">
-                <button className="secondary-btn" onClick={addEmptyScene}>
+                <button type="button" className="secondary-btn" onClick={addEmptyScene}>
                   <Plus size={14} /> Thêm cảnh
                 </button>
-                <button type="button" className="primary-btn" disabled={scriptBusy} aria-busy={scriptBusy} onClick={generateScripts}>
-                  <Sparkles size={15} /> {scriptBusy ? 'Đang tạo kịch bản...' : 'AI Viết kịch bản'}
+                <button
+                  type="button"
+                  className="primary-btn"
+                  disabled={scriptBusy || productsLoading || !productId}
+                  aria-busy={scriptBusy}
+                  onClick={generateScripts}
+                >
+                  {scriptBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                  {scriptBusy ? 'Đang tạo kịch bản...' : 'AI Viết kịch bản'}
                 </button>
               </div>
             </div>
 
-            {scriptNote && <div className="info-strip">{scriptNote}</div>}
+            {productsLoading ? (
+              <div className="info-strip">Đang tải danh sách sản phẩm để kích hoạt AI Viết kịch bản...</div>
+            ) : products.length === 0 ? (
+              <div className="warning-strip">
+                <AlertTriangle size={16} />
+                <span>
+                  Bạn chưa có sản phẩm nào để viết kịch bản. Hãy tạo ít nhất một sản phẩm trong{' '}
+                  <button type="button" className="inline-link-btn" onClick={onGoProducts}>Quản lý sản phẩm</button>.
+                </span>
+              </div>
+            ) : !productId ? (
+              <div className="warning-strip">
+                <AlertTriangle size={16} />
+                <span>Vui lòng chọn một sản phẩm ở mục 1 để AI viết kịch bản đúng theo sản phẩm của bạn.</span>
+              </div>
+            ) : null}
+
+            {scriptError && <div className="banner-alert error" role="alert">{scriptError}</div>}
+            {scriptNote && (
+              <div className={scriptNoteType === 'warning' ? 'warning-strip' : 'info-strip'}>
+                {scriptNoteType === 'warning' && <AlertTriangle size={16} />}
+                <span>{scriptNote}</span>
+              </div>
+            )}
 
             {variants.length > 1 && (
               <div className="variant-tabs">
@@ -1161,9 +1247,9 @@ export default function StudioPage({
 
                     <div className="form-grid-4">
                       <div className="field-label scene-image-upload">
-                        <span>Tải ảnh riêng cho cảnh</span>
+                        <label htmlFor={`scene-image-input-${idx}`}>Tải ảnh riêng cho cảnh</label>
                         <input
-                          ref={element => { sceneImageInputRefs.current[idx] = element; }}
+                          id={`scene-image-input-${idx}`}
                           className="scene-image-file-input"
                           type="file"
                           accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
@@ -1171,14 +1257,28 @@ export default function StudioPage({
                           onChange={e => {
                             const input = e.currentTarget;
                             const file = input.files?.[0];
-                            input.value = '';
-                            if (file) void uploadSceneImage(idx, file);
+                            if (file) {
+                              void uploadSceneImage(idx, file).finally(() => {
+                                input.value = '';
+                              });
+                            } else {
+                              input.value = '';
+                            }
                           }}
                         />
-                        <button type="button" className="scene-image-picker-btn" disabled={uploadingSceneIndex !== null || !(scene.productId || productId)} onClick={() => sceneImageInputRefs.current[idx]?.click()}>
-                          Chọn tệp ảnh
-                        </button>
-                        <small className="muted-copy">{uploadingSceneIndex === idx ? 'Đang tải ảnh lên...' : 'JPG, PNG hoặc WEBP · tối đa 5MB. Ảnh sẽ hiển thị trong bản xem trước.'}</small>
+                        {scene.imageUrl && (
+                          <div className="scene-image-inline-preview">
+                            <img src={scene.imageUrl} alt={`Ảnh phân cảnh #${idx + 1}`} referrerPolicy="no-referrer" />
+                            <span>Ảnh đang gắn cho cảnh #{idx + 1}</span>
+                          </div>
+                        )}
+                        <small className="muted-copy">
+                          {uploadingSceneIndex === idx
+                            ? 'Đang tải ảnh lên...'
+                            : !(scene.productId || productId)
+                              ? 'Chọn sản phẩm ở mục 1 để bật tải ảnh.'
+                              : 'JPG, PNG hoặc WEBP · tối đa 5MB. Chọn trực tiếp tệp ảnh để hiển thị ở xem trước.'}
+                        </small>
                       </div>
                       <label className="field-label">
                         Hình ảnh cảnh
@@ -1452,13 +1552,25 @@ export default function StudioPage({
         </aside>
       </div>
       {deleteSceneIndex !== null && (
-        <ConfirmDialog title="Xóa phân cảnh?"
+        <ConfirmDialog
+          title="Xóa phân cảnh?"
           message={`Bạn có chắc chắn muốn xóa phân cảnh #${deleteSceneIndex + 1} khỏi dự án này không?`}
           confirmLabel="Xóa phân cảnh"
           onCancel={() => setDeleteSceneIndex(null)}
           onConfirm={() => {
             const index = deleteSceneIndex;
-            setScenes(prev => prev.filter((_, sceneIndex) => sceneIndex !== index));
+            setScenes(prev => prev.filter((_, sceneIndex) => sceneIndex !== index).map((s, i) => ({ ...s, sortOrder: i })));
+            setSceneInstructions(prev => {
+              const next: Record<number, string> = {};
+              Object.entries(prev).forEach(([key, val]) => {
+                const k = Number(key);
+                if (k < index) next[k] = val;
+                else if (k > index) next[k - 1] = val;
+              });
+              return next;
+            });
+            setIsPlayingPreview(false);
+            setPreviewTime(0);
             setDeleteSceneIndex(null);
           }}
         />

@@ -40,6 +40,7 @@ export interface ScriptGenerationInput {
   durationSec: number;
   language: string;
   imageCount: number;
+  modelName?: string;
 }
 
 export interface GeneratedScene {
@@ -182,6 +183,7 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
     throw new Error('GEMINI_NOT_CONFIGURED');
   }
 
+  const modelName = (input.modelName || 'gemini-3.8-flash').replace(/^models\//, '').trim() || 'gemini-3.8-flash';
   const sceneCount = input.durationSec <= 15 ? 3 : input.durationSec <= 30 ? 5 : input.durationSec <= 45 ? 6 : input.durationSec <= 60 ? 7 : 9;
   const promptText = [
     `Tạo 2 phương án kịch bản video sản phẩm (${input.language === 'en' ? 'Tiếng Anh' : 'Tiếng Việt'}) với tổng thời lượng khoảng ${input.durationSec} giây, mỗi phương án gồm ${sceneCount} phân cảnh.`,
@@ -200,7 +202,7 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
   ].join('\n');
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
+    model: modelName,
     contents: promptText,
     config: {
       systemInstruction:
@@ -239,10 +241,65 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
     },
   });
 
-  const rawVariants = JSON.parse((response.text ?? '[]').trim()) as ScriptVariant[];
+  const rawText = (response.text ?? '[]').trim();
+  const fenced = rawText.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const parsed = JSON.parse(fenced ? fenced[1].trim() : rawText) as unknown;
+  const rawList = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { variants?: unknown[] }).variants)
+      ? (parsed as { variants: unknown[] }).variants
+      : [];
+  if (rawList.length === 0) {
+    throw new Error('Gemini không trả về phương án kịch bản.');
+  }
+  const allowedMotion: GeneratedScene['motionType'][] = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'parallax', 'rotate-showcase'];
+  const allowedTransition: GeneratedScene['transitionType'][] = ['fade', 'slide', 'zoom-cut'];
+  const allowedLighting: GeneratedScene['lightingEffect'][] = ['studio-glow', 'warm-gold', 'neon-rim', 'clean'];
+  const rawVariants: ScriptVariant[] = rawList.slice(0, 2).map((item, variantIdx) => {
+    const v = (item && typeof item === 'object' ? item : {}) as Partial<ScriptVariant>;
+    const sourceScenes = Array.isArray(v.scenes) ? v.scenes.slice(0, 12) : [];
+    const count = sourceScenes.length;
+    if (count === 0) throw new Error(`Phương án ${variantIdx + 1} không có phân cảnh.`);
+    const safeTotal = Math.max(count, input.durationSec);
+    const weights = sourceScenes.map(s => (Number.isFinite(Number(s?.durationSec)) && Number(s?.durationSec) > 0 ? Number(s?.durationSec) : 1));
+    const weightTotal = weights.reduce((sum, val) => sum + val, 0) || count;
+    let remaining = safeTotal;
+    const scenes: GeneratedScene[] = sourceScenes.map((s, idx) => {
+      const leftAfter = count - 1 - idx;
+      let dur: number;
+      if (idx === count - 1) {
+        dur = Number(Math.max(1, remaining).toFixed(1));
+      } else {
+        const ideal = Number(((safeTotal * weights[idx]) / weightTotal).toFixed(1));
+        const maxForThis = Number((remaining - leftAfter).toFixed(1));
+        dur = Number(Math.max(1, Math.min(ideal, maxForThis)).toFixed(1));
+        remaining = Number((remaining - dur).toFixed(1));
+      }
+      const motion = String(s?.motionType || '') as GeneratedScene['motionType'];
+      const transition = String(s?.transitionType || '') as GeneratedScene['transitionType'];
+      const lighting = String(s?.lightingEffect || '') as GeneratedScene['lightingEffect'];
+      return {
+        sortOrder: idx,
+        durationSec: dur,
+        narration: String(s?.narration || ''),
+        onScreenText: String(s?.onScreenText || ''),
+        motionType: allowedMotion.includes(motion) ? motion : 'zoom-in',
+        transitionType: allowedTransition.includes(transition) ? transition : 'fade',
+        lightingEffect: allowedLighting.includes(lighting) ? lighting : 'studio-glow',
+        visualPrompt: String(s?.visualPrompt || ''),
+        musicMood: String(s?.musicMood || 'upbeat-modern'),
+      };
+    });
+    return {
+      variantName: String(v.variantName || `Phương án ${variantIdx + 1}`),
+      hookSummary: String(v.hookSummary || ''),
+      ctaText: String(v.ctaText || 'Khám phá ngay'),
+      scenes,
+    };
+  });
   return {
     mode: 'gemini',
-    model: 'gemini-3.8-flash',
+    model: modelName,
     variants: rawVariants,
   };
 }

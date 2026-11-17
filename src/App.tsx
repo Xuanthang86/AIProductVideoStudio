@@ -672,7 +672,7 @@ export default function App() {
             <AuthPanel
               open={true}
               inline={true}
-              currentUser={user}
+              currentUser={authChecked ? user : undefined}
               initialMode={route === '/register' ? 'register' : 'login'}
               onClose={() => navigate('/')}
               onAuthChange={(u, q, us) => {

@@ -3215,7 +3215,7 @@ main,
 }
 
 /* Confirmation dialog used for destructive actions */
-.confirm-dialog-backdrop { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:18px; background:rgba(10,22,42,.58); backdrop-filter:blur(3px); }
+.confirm-dialog-backdrop { position:fixed; inset:0; z-index:1200; display:grid; place-items:center; padding:18px; background:rgba(10,22,42,.58); backdrop-filter:blur(3px); }
 .confirm-dialog { width:min(100%,460px); padding:22px; border:1px solid #d7e0ee; border-radius:16px; background:#fff; box-shadow:0 24px 70px rgba(8,20,40,.28); }
 .confirm-dialog h3 { display:flex; align-items:center; gap:9px; margin:0 0 8px; color:var(--navy); font-size:19px; }
 .confirm-dialog h3 svg { color:#c44740; flex:none; }
@@ -3244,23 +3244,31 @@ main,
 
 /* Scene-specific image upload: keep the native picker visible and touch-friendly. */
 .scene-image-upload { min-width: 0; align-content: start; gap: 8px; }
+.scene-image-upload > label { font: inherit; color: inherit; cursor: pointer; }
 .scene-image-file-input {
   display: block;
   width: 100%;
   min-width: 0;
+  min-height: 46px;
   box-sizing: border-box;
-  padding: 9px;
+  padding: 7px 9px;
   border: 1px solid var(--line-strong);
   border-radius: 9px;
   background: #f7faff;
   color: var(--ink);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
-.scene-image-file-input::file-selector-button {
+.scene-image-file-input::file-selector-button,
+.scene-image-file-input::-webkit-file-upload-button {
   margin: 0 9px 0 0;
-  padding: 8px 11px;
-  border: 0;
+  padding: 8px 12px;
+  min-height: 32px;
+  border: 1px solid #b9cbe6;
   border-radius: 7px;
   background: #e3edff;
   color: #173f83;
@@ -3268,7 +3276,47 @@ main,
   font-weight: 700;
   cursor: pointer;
 }
+.scene-image-file-input:hover:not(:disabled)::file-selector-button {
+  background: #d6e6ff;
+}
 .scene-image-file-input:disabled { opacity: .55; cursor: not-allowed; }
+.scene-image-inline-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.scene-image-inline-preview img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: none;
+  border: 1px solid var(--line);
+}
+.scene-image-inline-preview span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2f4361;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inline-link-btn {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 /* Compact, expandable catalog management. */
 .catalog-management-card { display: grid; gap: 12px; }
@@ -3337,56 +3385,11 @@ main,
 }
 
 
-/* Mobile brand lockup and explicit scene image picker. */
+/* Mobile brand lockup. */
 .brand-name {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-.scene-image-upload {
-  position: relative;
-  min-width: 0;
-  gap: 8px;
-}
-.scene-image-file-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-.scene-image-picker-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  align-self: flex-start;
-  gap: 7px;
-  min-height: 42px;
-  padding: 9px 13px;
-  border: 1px solid #b9cbe6;
-  border-radius: 9px;
-  background: #edf4ff;
-  color: #17458d;
-  font-size: 13.5px;
-  font-weight: 750;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-.scene-image-picker-btn:hover:not(:disabled) {
-  background: #e1ecff;
-  border-color: #8eaddd;
-}
-.scene-image-picker-btn:disabled {
-  opacity: .55;
-  cursor: not-allowed;
-}
-.scene-image-file-input:focus-visible + .scene-image-picker-btn {
-  outline: 3px solid rgba(34, 93, 211, .25);
-  outline-offset: 2px;
 }
 
 @media (max-width: 680px) {

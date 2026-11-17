@@ -7,14 +7,29 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
 export async function api<T = Record<string, unknown>>(
   path: string,
   method = 'GET',
-  data?: unknown
+  data?: unknown,
+  options?: { timeoutMs?: number }
 ): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    credentials: 'include',
-    headers: data ? { 'content-type': 'application/json' } : undefined,
-    body: data ? JSON.stringify(data) : undefined,
-  });
+  const controller = new AbortController();
+  const timeoutMs = options?.timeoutMs ?? 60000;
+  const timer = timeoutMs > 0 ? window.setTimeout(() => controller.abort(), timeoutMs) : 0;
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method,
+      credentials: 'include',
+      headers: data ? { 'content-type': 'application/json' } : undefined,
+      body: data ? JSON.stringify(data) : undefined,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Hết thời gian chờ phản hồi từ máy chủ. Vui lòng thử lại.');
+    }
+    throw new Error(err instanceof Error && err.message ? `Không kết nối được tới máy chủ: ${err.message}` : 'Không kết nối được tới máy chủ.');
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
   const result = await response.json().catch(() => ({ error: 'Phản hồi máy chủ không hợp lệ.' }));
   if (!response.ok) {
     if (response.status === 401 && !path.startsWith('/api/auth/login') && !path.startsWith('/api/auth/register')) {
@@ -69,11 +84,33 @@ export function formatDate(iso?: string | null): string {
   });
 }
 
-export function readImageFile(file: File): Promise<{ base64: string; width: number; height: number }> {
+export function normalizeImageMimeType(file: File): string {
+  const raw = (file.type || '').trim().toLowerCase();
+  if (raw === 'image/jpg' || raw === 'image/jpeg') return 'image/jpeg';
+  if (raw === 'image/png' || raw === 'image/webp') return raw;
+  const ext = (file.name || '').toLowerCase().split('.').pop() || '';
+  const extMap: Record<string, string> = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+  };
+  if (!raw || raw === 'application/octet-stream' || raw === 'image/*') {
+    return extMap[ext] || '';
+  }
+  return raw;
+}
+
+export function readImageFile(file: File): Promise<{ base64: string; mimeType: string; width: number; height: number }> {
   return new Promise((resolve, reject) => {
-    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.type.toLowerCase())) {
+    const mimeType = normalizeImageMimeType(file);
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(mimeType)) {
       reject(new Error(`File "${file.name}" không đúng định dạng (chỉ hỗ trợ JPG, JPEG, PNG, WEBP).`));
+      return;
+    }
+    if (file.size <= 0) {
+      reject(new Error(`File "${file.name}" rỗng hoặc không đọc được.`));
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
@@ -85,7 +122,7 @@ export function readImageFile(file: File): Promise<{ base64: string; width: numb
       const dataUrl = String(reader.result || '');
       const img = new Image();
       img.onload = () => {
-        resolve({ base64: dataUrl, width: img.naturalWidth, height: img.naturalHeight });
+        resolve({ base64: dataUrl, mimeType, width: img.naturalWidth, height: img.naturalHeight });
       };
       img.onerror = () => reject(new Error(`Không thể đọc kích thước ảnh "${file.name}".`));
       img.src = dataUrl;
