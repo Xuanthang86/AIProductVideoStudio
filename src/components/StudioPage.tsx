@@ -450,8 +450,10 @@ export default function StudioPage({
     if (!file) return;
     const sceneProductId = scenes[index]?.productId || productId;
     if (!sceneProductId) { setError('Vui lòng chọn sản phẩm cho phân cảnh trước khi tải ảnh.'); return; }
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setError('Ảnh phân cảnh chỉ hỗ trợ JPG, PNG hoặc WEBP.'); return; }
-    if (file.size > 5 * 1024 * 1024) { setError('Dung lượng ảnh mỗi phân cảnh tối đa 5MB.'); return; }
+    const extension = file.name.toLowerCase().split('.').pop() || '';
+    const mimeType = file.type.toLowerCase() || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' } as Record<string, string>)[extension] || '';
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) { setError('Ảnh phân cảnh chỉ hỗ trợ JPG, PNG hoặc WEBP.'); return; }
+    if (file.size <= 0 || file.size > 5 * 1024 * 1024) { setError('Dung lượng ảnh mỗi phân cảnh phải lớn hơn 0 và tối đa 5MB.'); return; }
     setUploadingSceneIndex(index); setError('');
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -467,7 +469,7 @@ export default function StudioPage({
         image.src = dataUrl;
       });
       const response = await api<{ image: Product['images'][number] }>(`/api/products/${sceneProductId}/images`, 'POST', {
-        fileName: file.name, mimeType: file.type, base64: dataUrl, ...dimensions,
+        fileName: file.name, mimeType, base64: dataUrl, ...dimensions,
       });
       updateScene(index, { productId: sceneProductId, productName: products.find(p => p.id === sceneProductId)?.name || '', imageId: response.image.id, imageUrl: response.image.imageUrl, sourceType: 'REAL_PRODUCT' });
       setProducts(prev => prev.map(product => product.id === sceneProductId ? { ...product, images: [...product.images, response.image] } : product));
