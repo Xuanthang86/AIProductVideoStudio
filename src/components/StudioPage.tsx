@@ -1001,7 +1001,7 @@ export default function StudioPage({
                 <button className="secondary-btn" onClick={addEmptyScene}>
                   <Plus size={14} /> Thêm cảnh
                 </button>
-                <button className="primary-btn" disabled={scriptBusy || !productId} onClick={generateScripts}>
+                <button type="button" className="primary-btn" disabled={scriptBusy} aria-busy={scriptBusy} onClick={generateScripts}>
                   <Sparkles size={15} /> {scriptBusy ? 'Đang tạo kịch bản...' : 'AI Viết kịch bản'}
                 </button>
               </div>
