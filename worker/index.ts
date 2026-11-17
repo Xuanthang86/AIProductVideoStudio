@@ -1358,7 +1358,8 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       }
 
       if (useGemini && env.GEMINI_API_KEY) {
-        const modelName = (str(modCfg?.model_name) || 'gemini-3.8-flash').replace(/^models\\//, '');
+        const configuredModel = str(modCfg?.model_name) || 'gemini-3.8-flash';
+        const modelName = configuredModel.startsWith('models/') ? configuredModel.slice('models/'.length) : configuredModel;
         try {
           const generated = env.AI_CALLER?.generateScripts
             ? await env.AI_CALLER.generateScripts(inputPayload)
