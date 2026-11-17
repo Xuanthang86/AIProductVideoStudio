@@ -31,12 +31,12 @@ import {
 } from 'lucide-react';
 
 const landingFormats = [
-  { name: 'Video quảng cáo', detail: 'Làm nổi bật lợi ích chính và thông điệp bán hàng', tag: 'Phổ biến' },
-  { name: 'Review sản phẩm', detail: 'Trình bày điểm nổi bật và trải nghiệm thực tế', tag: 'Bán hàng' },
-  { name: 'Showcase', detail: 'Tập trung đường nét, chất liệu và chi tiết sản phẩm', tag: 'Tối giản' },
-  { name: 'TikTok / Reels', detail: 'Khung hình dọc 9:16, nhịp cắt gọn và bắt mắt', tag: 'Mạng xã hội' },
-  { name: 'Hướng dẫn sử dụng', detail: 'Giải thích công năng sản phẩm theo từng bước', tag: 'Thông tin' },
-  { name: 'Lifestyle', detail: 'Đặt sản phẩm vào bối cảnh sinh hoạt thường ngày', tag: 'Sáng tạo' },
+  { name: 'Video quảng cáo', videoType: 'Advertisement', detail: 'Làm nổi bật lợi ích chính và thông điệp bán hàng', tag: 'Phổ biến' },
+  { name: 'Review sản phẩm', videoType: 'Product Review', detail: 'Trình bày điểm nổi bật và trải nghiệm thực tế', tag: 'Bán hàng' },
+  { name: 'Showcase', videoType: 'Product Showcase', detail: 'Tập trung đường nét, chất liệu và chi tiết sản phẩm', tag: 'Tối giản' },
+  { name: 'TikTok / Reels', videoType: 'TikTok Viral', detail: 'Khung hình dọc 9:16, nhịp cắt gọn và bắt mắt', tag: 'Mạng xã hội' },
+  { name: 'Hướng dẫn sử dụng', videoType: 'How-to', detail: 'Giải thích công năng sản phẩm theo từng bước', tag: 'Thông tin' },
+  { name: 'Lifestyle', videoType: 'Lifestyle', detail: 'Đặt sản phẩm vào bối cảnh sinh hoạt thường ngày', tag: 'Sáng tạo' },
 ];
 
 const steps = [
@@ -98,6 +98,7 @@ export default function App() {
   // Studio launch context
   const [studioProductId, setStudioProductId] = useState<string>('');
   const [studioTemplate, setStudioTemplate] = useState<VideoTemplate | null>(null);
+  const [studioVideoType, setStudioVideoType] = useState('');
   const [studioProjectId, setStudioProjectId] = useState<string>('');
 
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -360,16 +361,18 @@ export default function App() {
     ...(user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role) ? [{ label: 'Quản trị', path: '/admin', adminOnly: true }] : []),
   ];
 
-  const openStudio = (opts?: { productId?: string; template?: VideoTemplate | null; projectId?: string }) => {
+  const openStudio = (opts?: { productId?: string; template?: VideoTemplate | null; projectId?: string; videoType?: string }) => {
     setStudioProductId(opts?.productId || '');
     setStudioTemplate(opts?.template || null);
+    setStudioVideoType(opts?.videoType || opts?.template?.videoType || '');
     setStudioProjectId(opts?.projectId || '');
     navigate('/studio');
   };
 
   const handleHeroStart = () => {
-    const matched = templates.find(t => t.name.toLowerCase().includes(selected.toLowerCase()));
-    openStudio({ template: matched || null });
+    const selectedFormat = landingFormats.find(format => format.name === selected);
+    const matched = selectedFormat ? templates.find(template => template.videoType === selectedFormat.videoType) || null : null;
+    openStudio({ template: matched, videoType: selectedFormat?.videoType });
   };
 
   const isProtectedRoute = PROTECTED_ROUTES.includes(route);
@@ -389,7 +392,7 @@ export default function App() {
           <span className="brand-mark">
             <Aperture size={21} />
           </span>
-          <span className="brand-name">AI Product Video Studio</span>
+          <span className="brand-name"><span>AI Product</span><span>Video Studio</span></span>
         </a>
 
         <button
@@ -616,7 +619,11 @@ export default function App() {
                       key={format.name}
                       className={`format-card ${selected === format.name ? 'is-selected' : ''}`}
                       aria-pressed={selected === format.name}
-                      onClick={() => setSelected(format.name)}
+                      onClick={() => {
+                        setSelected(format.name);
+                        const matched = templates.find(template => template.videoType === format.videoType) || null;
+                        openStudio({ template: matched, videoType: format.videoType });
+                      }}
                     >
                       <div className="format-card-top">
                         <span className="format-icon">
@@ -631,7 +638,7 @@ export default function App() {
                       </span>
                       {selected === format.name && (
                         <span className="format-selected-note">
-                          <CheckCircle2 size={16} /> Phong cách đã được chọn. Bạn có thể tiếp tục mở Video Studio.
+                          <CheckCircle2 size={16} /> Đang mở Video Studio với phong cách đã chọn.
                         </span>
                       )}
                     </button>
@@ -730,6 +737,7 @@ export default function App() {
                 quota={quota}
                 initialProductId={studioProductId}
                 initialTemplate={studioTemplate}
+                initialVideoType={studioVideoType}
                 initialProjectId={studioProjectId}
                 onGoProducts={() => navigate('/products')}
                 onGoMyVideos={() => navigate('/my-videos')}
