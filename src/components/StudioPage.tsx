@@ -151,6 +151,7 @@ export default function StudioPage({
   const [sceneRenderProgress, setSceneRenderProgress] = useState(0);
   const [deleteSceneIndex, setDeleteSceneIndex] = useState<number | null>(null);
   const [imageCacheRevision, setImageCacheRevision] = useState(0);
+  const sceneImageInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   // MP4 Render state
   const [resolution, setResolution] = useState<RenderResolution>('720p');
