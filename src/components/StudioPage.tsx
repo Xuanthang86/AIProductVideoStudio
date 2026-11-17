@@ -361,6 +361,7 @@ export default function StudioPage({
           : `Đã tạo ${generatedVariants.length} phương án kịch bản dự phòng. ${res.fallbackReason || 'Bạn có thể tùy chỉnh từng phân cảnh.'}`
       );
     } catch (e) {
+      setScriptNote('');
       setError(e instanceof Error ? e.message : 'Không thể tạo kịch bản.');
     } finally {
       setScriptBusy(false);
