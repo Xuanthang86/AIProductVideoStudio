@@ -92,6 +92,7 @@ export interface ProductAnalysis {
     targetAudiences: string[];
     promoMessages: string[];
     recommendedVideoTypes: string[];
+    sceneRoles?: string[];
   };
   disclaimer: string;
 }
@@ -117,6 +118,30 @@ export type LightingEffect = 'studio-glow' | 'warm-gold' | 'neon-rim' | 'clean';
 export type AspectRatio = '9:16' | '16:9' | '1:1' | '4:5';
 export type ProjectStatus = 'DRAFT' | 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
+export type SceneBackdropStyle =
+  | 'auto-industry'
+  | 'luxury-pedestal'
+  | 'minimal-studio'
+  | 'tech-grid'
+  | 'warm-lifestyle'
+  | 'botanical-fresh';
+
+export type SceneLightingPreset = 'soft-studio' | 'golden-hour' | 'editorial-contrast' | 'cool-tech';
+
+export type SceneRole = 'intro' | 'usp' | 'detail' | 'lifestyle' | 'cta' | 'showcase';
+
+export interface SceneStageConfig {
+  bgMode?: 'original' | 'cutout-studio';
+  cutoutSensitivity?: number;
+  backdropStyle?: SceneBackdropStyle;
+  productScale?: number;
+  productOffsetX?: number;
+  productOffsetY?: number;
+  shadowIntensity?: number;
+  lightingPreset?: SceneLightingPreset;
+  motionSpeed?: number;
+}
+
 export interface VideoScene {
   id?: string;
   projectId?: string;
@@ -125,6 +150,8 @@ export interface VideoScene {
   renderedClip?: boolean;
   sortOrder: number;
   durationSec: number;
+  sceneTitle?: string;
+  sceneRole?: SceneRole;
   narration: string;
   onScreenText: string;
   showOnScreenText?: boolean;
@@ -137,6 +164,7 @@ export interface VideoScene {
   lightingEffect: LightingEffect;
   visualPrompt: string;
   musicMood: string;
+  stageConfig?: SceneStageConfig;
 }
 
 export interface ScriptVariant {

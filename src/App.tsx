@@ -564,12 +564,12 @@ export default function App() {
                       onClick={() => setHeroPreviewPlaying(playing => !playing)}
                     >
                       {heroPreviewPlaying ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
-                      {heroPreviewPlaying ? 'Đang phát' : 'Phát video'}
+                      <span className="preview-toggle-label">{heroPreviewPlaying ? 'Đang phát' : 'Phát video'}</span>
                     </button>
                     <div className="timeline">
                       <i style={{ width: String((heroPreviewElapsed / 15) * 100) + '%' }} />
                     </div>
-                    <span aria-live="off">{previewElapsedLabel} / 00:15</span>
+                    <span className="preview-time-readout" aria-live="off">{previewElapsedLabel} / 00:15</span>
                   </div>
                 </div>
               </div>

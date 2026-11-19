@@ -9,6 +9,8 @@ export interface ProductAnalysisInput {
   extraInfo: string;
   imageBase64?: string;
   imageMimeType?: string;
+  images?: Array<{ base64: string; mimeType: string; fileName?: string }>;
+  modelName?: string;
 }
 
 export interface ProductAnalysisResult {
@@ -24,6 +26,7 @@ export interface ProductAnalysisResult {
     targetAudiences: string[];
     promoMessages: string[];
     recommendedVideoTypes: string[];
+    sceneRoles?: string[];
   };
   disclaimer: string;
 }
@@ -46,6 +49,8 @@ export interface ScriptGenerationInput {
 export interface GeneratedScene {
   sortOrder: number;
   durationSec: number;
+  sceneTitle?: string;
+  sceneRole?: 'intro' | 'usp' | 'detail' | 'lifestyle' | 'cta' | 'showcase';
   narration: string;
   onScreenText: string;
   motionType: 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'parallax' | 'rotate-showcase';
@@ -68,6 +73,67 @@ export interface ScriptGenerationResult {
   variants: ScriptVariant[];
 }
 
+const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
+const FALLBACK_GEMINI_MODEL = 'gemini-3.1-flash-lite';
+const SECONDARY_FALLBACK_GEMINI_MODEL = 'gemini-2.5-flash';
+
+function normalizeGeminiModel(raw?: string): string {
+  const cleaned = (raw || '').replace(/^models\//, '').trim();
+  if (!cleaned || cleaned === 'gemini-3.8-flash' || cleaned === 'gemini-2.0-flash' || cleaned === 'gemini-1.5-flash') {
+    return DEFAULT_GEMINI_MODEL;
+  }
+  return cleaned;
+}
+
+function shouldFallbackGeminiError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  return (
+    msg.includes('404') ||
+    msg.includes('not found') ||
+    msg.includes('not supported') ||
+    msg.includes('invalid model') ||
+    msg.includes('503') ||
+    msg.includes('unavailable') ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded') ||
+    msg.includes('429') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('500') ||
+    msg.includes('internal') ||
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('abort') ||
+    msg.includes('deadline_exceeded')
+  );
+}
+
+async function generateContentWithTimeout(
+  ai: GoogleGenAI,
+  params: Parameters<GoogleGenAI['models']['generateContent']>[0],
+  timeoutMs = 20000
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error(`Gemini request timed out after ${timeoutMs}ms`)), timeoutMs);
+  try {
+    const configWithSignal = {
+      ...(params.config || {}),
+      abortSignal: controller.signal,
+    };
+    return await Promise.race([
+      ai.models.generateContent({ ...params, config: configWithSignal }),
+      new Promise<never>((_, reject) => {
+        controller.signal.addEventListener(
+          'abort',
+          () => reject(new Error(`Gemini request timed out after ${timeoutMs}ms`)),
+          { once: true }
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function getGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) return null;
@@ -88,7 +154,7 @@ export async function analyzeProductWithGemini(input: ProductAnalysisInput): Pro
   }
 
   const promptText = [
-    'Phân tích sản phẩm sau bằng tiếng Việt để chuẩn bị làm video sản phẩm.',
+    'Phân tích sản phẩm sau bằng tiếng Việt để chuẩn bị làm video quảng cáo sản phẩm.',
     `Tên sản phẩm: ${input.name}`,
     `Thương hiệu: ${input.brand || 'Chưa cung cấp'}`,
     `Ngành hàng: ${input.industry}`,
@@ -98,11 +164,23 @@ export async function analyzeProductWithGemini(input: ProductAnalysisInput): Pro
     'YÊU CẦU BẮT BUỘC:',
     '1. Ưu tiên tuyệt đối thông tin do người dùng cung cấp trong confirmedFacts.',
     '2. KHÔNG tự suy diễn thông số kỹ thuật, chứng nhận chất lượng, công dụng y tế/pháp lý hoặc cam kết bảo hành nếu không có trong dữ liệu.',
-    '3. Phân biệt rõ nội dung quan sát/gợi ý sáng tạo trong aiSuggestions.',
+    '3. Phân biệt rõ nội dung quan sát từ ảnh và gợi ý sáng tạo trong aiSuggestions.',
+    '4. Nếu có nhiều ảnh, gợi ý vai trò từng ảnh (ví dụ: Ảnh 1: Cảnh mở đầu toàn cảnh; Ảnh 2: Cận cảnh chi tiết) trong sceneRoles.',
   ].join('\n');
 
   const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
-  if (input.imageBase64 && input.imageMimeType) {
+  if (input.images && input.images.length > 0) {
+    for (const img of input.images.slice(0, 4)) {
+      if (img.base64 && img.mimeType) {
+        parts.push({
+          inlineData: {
+            mimeType: img.mimeType,
+            data: img.base64,
+          },
+        });
+      }
+    }
+  } else if (input.imageBase64 && input.imageMimeType) {
     parts.push({
       inlineData: {
         mimeType: input.imageMimeType,
@@ -112,40 +190,66 @@ export async function analyzeProductWithGemini(input: ProductAnalysisInput): Pro
   }
   parts.push({ text: promptText });
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: { parts },
-    config: {
-      systemInstruction:
-        'Bạn là chuyên gia phân tích sản phẩm đa ngành hàng cho nền tảng tạo video thương mại. Trung thực, không bịa thông số hay chứng nhận không có thật.',
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          detectedCategory: { type: Type.STRING },
-          visualSummary: { type: Type.STRING },
-          confirmedFacts: { type: Type.ARRAY, items: { type: Type.STRING } },
-          colorsAndMaterials: { type: Type.STRING },
-          keyDetails: { type: Type.ARRAY, items: { type: Type.STRING } },
-          uspIdeas: { type: Type.ARRAY, items: { type: Type.STRING } },
-          targetAudiences: { type: Type.ARRAY, items: { type: Type.STRING } },
-          promoMessages: { type: Type.ARRAY, items: { type: Type.STRING } },
-          recommendedVideoTypes: { type: Type.ARRAY, items: { type: Type.STRING } },
-        },
-        required: [
-          'detectedCategory',
-          'visualSummary',
-          'confirmedFacts',
-          'colorsAndMaterials',
-          'keyDetails',
-          'uspIdeas',
-          'targetAudiences',
-          'promoMessages',
-          'recommendedVideoTypes',
-        ],
+  const requestConfig = {
+    systemInstruction:
+      'Bạn là chuyên gia phân tích sản phẩm đa ngành hàng cho nền tảng tạo video thương mại. Trung thực, không bịa thông số hay chứng nhận không có thật.',
+    responseMimeType: 'application/json',
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        detectedCategory: { type: Type.STRING },
+        visualSummary: { type: Type.STRING },
+        confirmedFacts: { type: Type.ARRAY, items: { type: Type.STRING } },
+        colorsAndMaterials: { type: Type.STRING },
+        keyDetails: { type: Type.ARRAY, items: { type: Type.STRING } },
+        uspIdeas: { type: Type.ARRAY, items: { type: Type.STRING } },
+        targetAudiences: { type: Type.ARRAY, items: { type: Type.STRING } },
+        promoMessages: { type: Type.ARRAY, items: { type: Type.STRING } },
+        recommendedVideoTypes: { type: Type.ARRAY, items: { type: Type.STRING } },
+        sceneRoles: { type: Type.ARRAY, items: { type: Type.STRING } },
       },
+      required: [
+        'detectedCategory',
+        'visualSummary',
+        'confirmedFacts',
+        'colorsAndMaterials',
+        'keyDetails',
+        'uspIdeas',
+        'targetAudiences',
+        'promoMessages',
+        'recommendedVideoTypes',
+      ],
     },
-  });
+  };
+
+  const requestedModel = normalizeGeminiModel(input.modelName);
+  const candidateModels = Array.from(new Set([requestedModel, FALLBACK_GEMINI_MODEL, SECONDARY_FALLBACK_GEMINI_MODEL]));
+  let usedModel = candidateModels[0];
+  let response;
+  let lastErr: unknown;
+  for (let i = 0; i < candidateModels.length; i++) {
+    usedModel = candidateModels[i];
+    try {
+      response = await generateContentWithTimeout(
+        ai,
+        {
+          model: usedModel,
+          contents: { parts },
+          config: requestConfig,
+        },
+        i === 0 ? 12000 : 14000
+      );
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (i + 1 < candidateModels.length && shouldFallbackGeminiError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (!response) throw lastErr || new Error('Gemini analysis failed');
 
   const parsed = JSON.parse((response.text ?? '{}').trim()) as {
     detectedCategory: string;
@@ -157,11 +261,12 @@ export async function analyzeProductWithGemini(input: ProductAnalysisInput): Pro
     targetAudiences: string[];
     promoMessages: string[];
     recommendedVideoTypes: string[];
+    sceneRoles?: string[];
   };
 
   return {
     mode: 'gemini',
-    model: 'gemini-3.8-flash',
+    model: usedModel,
     detectedCategory: parsed.detectedCategory || input.industry,
     visualSummary: parsed.visualSummary || '',
     confirmedFacts: parsed.confirmedFacts || [],
@@ -172,6 +277,7 @@ export async function analyzeProductWithGemini(input: ProductAnalysisInput): Pro
       targetAudiences: parsed.targetAudiences || [],
       promoMessages: parsed.promoMessages || [],
       recommendedVideoTypes: parsed.recommendedVideoTypes || ['Advertisement', 'Product Showcase'],
+      sceneRoles: parsed.sceneRoles || [],
     },
     disclaimer: 'Thông tin xác nhận lấy từ dữ liệu người dùng nhập; phần gợi ý sáng tạo do Gemini AI đề xuất và cần người dùng kiểm duyệt trước khi xuất bản.',
   };
@@ -183,10 +289,9 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
     throw new Error('GEMINI_NOT_CONFIGURED');
   }
 
-  const modelName = (input.modelName || 'gemini-3.8-flash').replace(/^models\//, '').trim() || 'gemini-3.8-flash';
-  const sceneCount = input.durationSec <= 15 ? 3 : input.durationSec <= 30 ? 5 : input.durationSec <= 45 ? 6 : input.durationSec <= 60 ? 7 : 9;
+  const sceneCount = input.durationSec <= 12 ? 2 : input.durationSec <= 20 ? 3 : input.durationSec <= 35 ? 4 : input.durationSec <= 50 ? 5 : 6;
   const promptText = [
-    `Tạo 2 phương án kịch bản video sản phẩm (${input.language === 'en' ? 'Tiếng Anh' : 'Tiếng Việt'}) với tổng thời lượng khoảng ${input.durationSec} giây, mỗi phương án gồm ${sceneCount} phân cảnh.`,
+    `Tạo 2 phương án kịch bản video sản phẩm (${input.language === 'en' ? 'Tiếng Anh' : 'Tiếng Việt'}) với tổng thời lượng chính xác ${input.durationSec} giây, mỗi phương án gồm ${sceneCount} phân cảnh.`,
     `Loại video: ${input.videoType}`,
     `Ngành hàng: ${input.industry}`,
     `Tên sản phẩm: ${input.productName}`,
@@ -195,51 +300,79 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
     `Điểm nổi bật đã xác nhận: ${input.highlights.join('; ') || 'Dựa trên hình ảnh sản phẩm'}`,
     `Đối tượng khách hàng: ${input.targetAudience || 'Khách hàng phổ thông quan tâm sản phẩm'}`,
     `Phong cách: ${input.style}`,
-    `Lưu ý: Không bịa thông số hay chứng nhận không có trong mô tả. Tổng durationSec các phân cảnh trong mỗi phương án phải bằng ${input.durationSec}.`,
+    `Lưu ý: Không bịa thông số hay chứng nhận không có trong mô tả. Tổng durationSec các phân cảnh trong mỗi phương án phải đúng bằng ${input.durationSec}.`,
+    'sceneTitle là tên ngắn gọn của cảnh; sceneRole chỉ chọn trong: intro, usp, detail, lifestyle, cta, showcase.',
     'motionType chỉ chọn trong: zoom-in, zoom-out, pan-left, pan-right, parallax, rotate-showcase.',
     'transitionType chỉ chọn trong: fade, slide, zoom-cut.',
     'lightingEffect chỉ chọn trong: studio-glow, warm-gold, neon-rim, clean.',
   ].join('\n');
 
-  const response = await ai.models.generateContent({
-    model: modelName,
-    contents: promptText,
-    config: {
-      systemInstruction:
-        'Bạn là biên kịch video quảng cáo sản phẩm chuyên nghiệp. Tạo kịch bản súc tích, đúng thời lượng, lời thoại tự nhiên, trung thực với thông tin sản phẩm.',
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            variantName: { type: Type.STRING },
-            hookSummary: { type: Type.STRING },
-            ctaText: { type: Type.STRING },
-            scenes: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  sortOrder: { type: Type.INTEGER },
-                  durationSec: { type: Type.NUMBER },
-                  narration: { type: Type.STRING },
-                  onScreenText: { type: Type.STRING },
-                  motionType: { type: Type.STRING },
-                  transitionType: { type: Type.STRING },
-                  lightingEffect: { type: Type.STRING },
-                  visualPrompt: { type: Type.STRING },
-                  musicMood: { type: Type.STRING },
-                },
-                required: ['sortOrder', 'durationSec', 'narration', 'onScreenText', 'motionType', 'transitionType', 'lightingEffect', 'visualPrompt', 'musicMood'],
+  const requestConfig = {
+    systemInstruction:
+      'Bạn là biên kịch video quảng cáo sản phẩm chuyên nghiệp. Tạo kịch bản súc tích, đúng thời lượng, lời thoại tự nhiên, trung thực với thông tin sản phẩm.',
+    responseMimeType: 'application/json',
+    responseSchema: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          variantName: { type: Type.STRING },
+          hookSummary: { type: Type.STRING },
+          ctaText: { type: Type.STRING },
+          scenes: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                sortOrder: { type: Type.INTEGER },
+                durationSec: { type: Type.NUMBER },
+                sceneTitle: { type: Type.STRING },
+                sceneRole: { type: Type.STRING },
+                narration: { type: Type.STRING },
+                onScreenText: { type: Type.STRING },
+                motionType: { type: Type.STRING },
+                transitionType: { type: Type.STRING },
+                lightingEffect: { type: Type.STRING },
+                visualPrompt: { type: Type.STRING },
+                musicMood: { type: Type.STRING },
               },
+              required: ['sortOrder', 'durationSec', 'sceneTitle', 'sceneRole', 'narration', 'onScreenText', 'motionType', 'transitionType', 'lightingEffect', 'visualPrompt', 'musicMood'],
             },
           },
-          required: ['variantName', 'hookSummary', 'ctaText', 'scenes'],
         },
+        required: ['variantName', 'hookSummary', 'ctaText', 'scenes'],
       },
     },
-  });
+  };
+
+  const requestedModel = normalizeGeminiModel(input.modelName);
+  const candidateModels = Array.from(new Set([requestedModel, FALLBACK_GEMINI_MODEL, SECONDARY_FALLBACK_GEMINI_MODEL]));
+  let modelName = candidateModels[0];
+  let response;
+  let lastErr: unknown;
+  for (let i = 0; i < candidateModels.length; i++) {
+    modelName = candidateModels[i];
+    try {
+      response = await generateContentWithTimeout(
+        ai,
+        {
+          model: modelName,
+          contents: promptText,
+          config: requestConfig,
+        },
+        i === 0 ? 12000 : 14000
+      );
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (i + 1 < candidateModels.length && shouldFallbackGeminiError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (!response) throw lastErr || new Error('Gemini script generation failed');
 
   const rawText = (response.text ?? '[]').trim();
   const fenced = rawText.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -255,6 +388,7 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
   const allowedMotion: GeneratedScene['motionType'][] = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'parallax', 'rotate-showcase'];
   const allowedTransition: GeneratedScene['transitionType'][] = ['fade', 'slide', 'zoom-cut'];
   const allowedLighting: GeneratedScene['lightingEffect'][] = ['studio-glow', 'warm-gold', 'neon-rim', 'clean'];
+  const allowedRoles: NonNullable<GeneratedScene['sceneRole']>[] = ['intro', 'usp', 'detail', 'lifestyle', 'cta', 'showcase'];
   const rawVariants: ScriptVariant[] = rawList.slice(0, 2).map((item, variantIdx) => {
     const v = (item && typeof item === 'object' ? item : {}) as Partial<ScriptVariant>;
     const sourceScenes = Array.isArray(v.scenes) ? v.scenes.slice(0, 12) : [];
@@ -279,9 +413,12 @@ export async function generateScriptsWithGemini(input: ScriptGenerationInput): P
       const motion = String(s?.motionType || '') as GeneratedScene['motionType'];
       const transition = String(s?.transitionType || '') as GeneratedScene['transitionType'];
       const lighting = String(s?.lightingEffect || '') as GeneratedScene['lightingEffect'];
+      const role = String(s?.sceneRole || '') as NonNullable<GeneratedScene['sceneRole']>;
       return {
         sortOrder: idx,
         durationSec: dur,
+        sceneTitle: String(s?.sceneTitle || (idx === 0 ? 'Mở đầu thu hút' : idx === count - 1 ? 'Kết & Kêu gọi hành động' : `Điểm nhấn ${idx}`)),
+        sceneRole: allowedRoles.includes(role) ? role : (idx === 0 ? 'intro' : idx === count - 1 ? 'cta' : 'usp'),
         narration: String(s?.narration || ''),
         onScreenText: String(s?.onScreenText || ''),
         motionType: allowedMotion.includes(motion) ? motion : 'zoom-in',

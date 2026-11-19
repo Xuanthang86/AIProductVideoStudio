@@ -24,6 +24,8 @@ export interface AICaller {
     extraInfo: string;
     imageBase64?: string;
     imageMimeType?: string;
+    images?: Array<{ base64: string; mimeType: string; fileName?: string }>;
+    modelName?: string;
   }) => Promise<unknown>;
   generateScripts?: (input: {
     productName: string;
@@ -442,7 +444,7 @@ function buildStructuredFreeScripts(input: {
   durationSec: number;
   language: string;
 }) {
-  const count = input.durationSec <= 15 ? 3 : input.durationSec <= 30 ? 4 : input.durationSec <= 45 ? 5 : input.durationSec <= 60 ? 6 : 7;
+  const count = input.durationSec <= 12 ? 2 : input.durationSec <= 20 ? 3 : input.durationSec <= 35 ? 4 : input.durationSec <= 50 ? 5 : 6;
   const perScene = Number((input.durationSec / count).toFixed(1));
   const hl = input.highlights.length > 0 ? input.highlights : [input.description || input.productName];
   const isEn = input.language === 'en';
@@ -455,19 +457,27 @@ function buildStructuredFreeScripts(input: {
       const point = hl[i % hl.length];
       let narration = '';
       let onScreenText = '';
+      let sceneTitle = '';
+      let sceneRole: 'intro' | 'usp' | 'detail' | 'cta' = 'usp';
       if (i === 0) {
+        sceneTitle = isEn ? 'Opening Hook' : 'Mở đầu thu hút';
+        sceneRole = 'intro';
         narration = isEn
           ? `Meet ${input.productName}${input.brand ? ` by ${input.brand}` : ''} — built for ${input.industry}.`
           : variantIdx === 0
-            ? `Giới thiệu ${input.productName}${input.brand ? ` từ ${input.brand}` : ''} — giải pháp nổi bật cho nhóm ${input.industry}.`
+            ? `Giới thiệu ${input.productName}${input.brand ? ` từ ${input.brand}` : ''} — lựa chọn nổi bật trong ngành ${input.industry}.`
             : `Bạn đang tìm kiếm ${input.productName}? Hãy cùng xem điểm ấn tượng ngay sau đây.`;
         onScreenText = input.productName;
       } else if (i === count - 1) {
+        sceneTitle = isEn ? 'Closing & CTA' : 'Kết & Kêu gọi hành động';
+        sceneRole = 'cta';
         narration = isEn
           ? `Discover ${input.productName} today. Tap to learn more.`
-          : `Trải nghiệm ${input.productName} ngay hôm nay. Liên hệ hoặc xem chi tiết sản phẩm!`;
+          : `Trải nghiệm ${input.productName} ngay hôm nay. Xem chi tiết sản phẩm!`;
         onScreenText = variantIdx === 0 ? 'Khám phá ngay' : 'Xem chi tiết sản phẩm';
       } else {
+        sceneTitle = isEn ? `Highlight ${i}` : `Điểm nhấn ${i}`;
+        sceneRole = i % 2 === 1 ? 'usp' : 'detail';
         narration = isEn
           ? `Highlight ${i}: ${point}.`
           : variantIdx === 0
@@ -479,6 +489,8 @@ function buildStructuredFreeScripts(input: {
       return {
         sortOrder: i,
         durationSec: i === count - 1 ? Number((input.durationSec - perScene * (count - 1)).toFixed(1)) : perScene,
+        sceneTitle,
+        sceneRole,
         narration,
         onScreenText,
         motionType: motions[(i + variantIdx) % motions.length],
@@ -543,11 +555,191 @@ function stripJsonFences(text: string): string {
   return fenced ? fenced[1].trim() : trimmed;
 }
 
+const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
+const FALLBACK_GEMINI_MODEL = 'gemini-3.1-flash-lite';
+const SECONDARY_FALLBACK_GEMINI_MODEL = 'gemini-2.5-flash';
+
+function normalizeGeminiModel(raw?: string | null): string {
+  const cleaned = String(raw || '').replace(/^models\//, '').trim();
+  if (!cleaned || cleaned === 'gemini-3.8-flash' || cleaned === 'gemini-2.0-flash' || cleaned === 'gemini-1.5-flash') {
+    return DEFAULT_GEMINI_MODEL;
+  }
+  return cleaned;
+}
+
+function formatGeminiFallbackReason(rawMsg: string): string {
+  const lower = rawMsg.toLowerCase();
+  if (lower.includes('503') || lower.includes('unavailable') || lower.includes('high demand')) {
+    return 'Gemini API đang quá tải tạm thời (503). Hệ thống đã tự chuyển sang phương án dự phòng miễn phí.';
+  }
+  if (lower.includes('429') || lower.includes('resource_exhausted')) {
+    return 'Gemini API tạm chạm giới hạn tần suất (429). Hệ thống đã chuyển sang phương án dự phòng miễn phí.';
+  }
+  if (lower.includes('timed out') || lower.includes('hết thời gian chờ')) {
+    return 'Gemini API phản hồi quá chậm. Hệ thống đã chuyển sang phương án dự phòng miễn phí để không làm gián đoạn thao tác.';
+  }
+  return rawMsg.length > 260 ? `${rawMsg.slice(0, 257)}...` : rawMsg;
+}
+
+async function callGeminiGenerateContent(
+  apiKey: string,
+  requestedModel: string,
+  requestBody: Record<string, unknown>,
+  timeoutMs = 14000
+): Promise<{ payload: Record<string, unknown>; model: string }> {
+  const primaryModel = normalizeGeminiModel(requestedModel);
+  const candidates = Array.from(new Set([primaryModel, FALLBACK_GEMINI_MODEL, SECONDARY_FALLBACK_GEMINI_MODEL]));
+  let lastError = 'Gemini API không phản hồi.';
+
+  for (let i = 0; i < candidates.length; i++) {
+    const model = candidates[i];
+    const bodyToSend: Record<string, unknown> = structuredClone(requestBody);
+    // Keep default sampling for gemini-4-* models per SDK specification
+    if (model.startsWith('gemini-4-') && bodyToSend.generationConfig && typeof bodyToSend.generationConfig === 'object') {
+      delete (bodyToSend.generationConfig as Record<string, unknown>).temperature;
+      delete (bodyToSend.generationConfig as Record<string, unknown>).topP;
+      delete (bodyToSend.generationConfig as Record<string, unknown>).topK;
+      delete (bodyToSend.generationConfig as Record<string, unknown>).candidateCount;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify(bodyToSend),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (fetchErr) {
+      const timeoutMsg = fetchErr instanceof Error && (fetchErr.name === 'AbortError' || fetchErr.name === 'TimeoutError')
+        ? 'Hết thời gian chờ phản hồi từ Gemini API.'
+        : (fetchErr instanceof Error ? fetchErr.message : 'Không kết nối được tới Gemini API.');
+      lastError = timeoutMsg;
+      if (i + 1 < candidates.length) continue;
+      throw new Error(timeoutMsg);
+    }
+
+    const rawBody = await response.text();
+    const parsed = safeJsonParse<{ error?: { message?: string; status?: string }; candidates?: unknown[] } | null>(rawBody, null);
+    if (response.ok && parsed) {
+      return { payload: parsed as Record<string, unknown>, model };
+    }
+
+    const errMsg = parsed?.error?.message || `Gemini API trả về HTTP ${response.status}.`;
+    lastError = `${errMsg} (HTTP ${response.status})`;
+    const isTransientOrModelUnavailable =
+      response.status === 404 ||
+      response.status === 503 ||
+      response.status === 502 ||
+      response.status === 500 ||
+      response.status === 429 ||
+      /not found|not supported|unknown model|high demand|unavailable|overloaded/i.test(errMsg);
+    if (isTransientOrModelUnavailable && i + 1 < candidates.length) {
+      continue;
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`GEMINI_API_KEY không hợp lệ hoặc chưa được cấp quyền (${errMsg}).`);
+    }
+    if (response.status === 429) {
+      throw new Error(`Gemini API đã chạm giới hạn tần suất (429): ${errMsg}`);
+    }
+    throw new Error(lastError);
+  }
+  throw new Error(lastError);
+}
+
+async function analyzeProductWithGeminiApi(
+  input: {
+    name: string;
+    brand: string;
+    industry: string;
+    description: string;
+    highlights: string[];
+    extraInfo: string;
+    images?: Array<{ base64: string; mimeType: string }>;
+    imageBase64?: string;
+    imageMimeType?: string;
+  },
+  apiKey: string,
+  requestedModel = DEFAULT_GEMINI_MODEL
+) {
+  const promptText = [
+    'Phân tích sản phẩm sau bằng tiếng Việt để chuẩn bị làm video quảng cáo sản phẩm.',
+    `Tên sản phẩm: ${input.name}`,
+    `Thương hiệu: ${input.brand || 'Chưa cung cấp'}`,
+    `Ngành hàng: ${input.industry}`,
+    `Mô tả từ người dùng: ${input.description || 'Chưa cung cấp'}`,
+    `Đặc điểm nổi bật từ người dùng: ${input.highlights.length ? input.highlights.join('; ') : 'Chưa cung cấp'}`,
+    `Thông tin bổ sung: ${input.extraInfo || 'Không có'}`,
+    'YÊU CẦU BẮT BUỘC:',
+    '1. Ưu tiên tuyệt đối thông tin do người dùng cung cấp trong confirmedFacts.',
+    '2. KHÔNG tự suy diễn thông số kỹ thuật, chứng nhận chất lượng, công dụng y tế/pháp lý hoặc cam kết bảo hành nếu không có trong dữ liệu.',
+    '3. Phân biệt rõ nội dung quan sát từ hình ảnh và gợi ý sáng tạo.',
+    '4. Nếu có nhiều ảnh, gợi ý vai trò từng ảnh cho kịch bản trong sceneRoles.',
+  ].join('\n');
+
+  const parts: Array<Record<string, unknown>> = [];
+  if (input.images && input.images.length > 0) {
+    for (const img of input.images.slice(0, 4)) {
+      if (img.base64 && img.mimeType) parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+    }
+  } else if (input.imageBase64 && input.imageMimeType) {
+    parts.push({ inlineData: { mimeType: input.imageMimeType, data: input.imageBase64 } });
+  }
+  parts.push({ text: promptText });
+
+  const responseSchema = {
+    type: 'OBJECT',
+    properties: {
+      detectedCategory: { type: 'STRING' },
+      visualSummary: { type: 'STRING' },
+      confirmedFacts: { type: 'ARRAY', items: { type: 'STRING' } },
+      colorsAndMaterials: { type: 'STRING' },
+      keyDetails: { type: 'ARRAY', items: { type: 'STRING' } },
+      uspIdeas: { type: 'ARRAY', items: { type: 'STRING' } },
+      targetAudiences: { type: 'ARRAY', items: { type: 'STRING' } },
+      promoMessages: { type: 'ARRAY', items: { type: 'STRING' } },
+      recommendedVideoTypes: { type: 'ARRAY', items: { type: 'STRING' } },
+      sceneRoles: { type: 'ARRAY', items: { type: 'STRING' } },
+    },
+    required: ['detectedCategory', 'visualSummary', 'confirmedFacts', 'colorsAndMaterials', 'keyDetails', 'uspIdeas', 'targetAudiences', 'promoMessages', 'recommendedVideoTypes'],
+  };
+
+  const { payload, model } = await callGeminiGenerateContent(apiKey, requestedModel, {
+    systemInstruction: {
+      parts: [{ text: 'Bạn là chuyên gia phân tích sản phẩm đa ngành hàng cho nền tảng tạo video thương mại. Trung thực, không bịa thông số hay chứng nhận không có thật.' }],
+    },
+    contents: [{ role: 'user', parts }],
+    generationConfig: { responseMimeType: 'application/json', responseSchema },
+  });
+
+  const candidates = (payload as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates;
+  const responseText = candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim() || '{}';
+  const parsed = JSON.parse(stripJsonFences(responseText)) as Record<string, unknown>;
+  return {
+    mode: 'gemini' as const,
+    model,
+    detectedCategory: str(parsed.detectedCategory) || input.industry,
+    visualSummary: str(parsed.visualSummary),
+    confirmedFacts: Array.isArray(parsed.confirmedFacts) ? parsed.confirmedFacts.map(x => str(x)).filter(Boolean) : [],
+    aiSuggestions: {
+      colorsAndMaterials: str(parsed.colorsAndMaterials),
+      keyDetails: Array.isArray(parsed.keyDetails) ? parsed.keyDetails.map(x => str(x)).filter(Boolean) : [],
+      uspIdeas: Array.isArray(parsed.uspIdeas) ? parsed.uspIdeas.map(x => str(x)).filter(Boolean) : [],
+      targetAudiences: Array.isArray(parsed.targetAudiences) ? parsed.targetAudiences.map(x => str(x)).filter(Boolean) : [],
+      promoMessages: Array.isArray(parsed.promoMessages) ? parsed.promoMessages.map(x => str(x)).filter(Boolean) : [],
+      recommendedVideoTypes: Array.isArray(parsed.recommendedVideoTypes) ? parsed.recommendedVideoTypes.map(x => str(x)).filter(Boolean) : ['Advertisement', 'Product Showcase'],
+      sceneRoles: Array.isArray(parsed.sceneRoles) ? parsed.sceneRoles.map(x => str(x)).filter(Boolean) : [],
+    },
+    disclaimer: 'Thông tin xác nhận lấy từ dữ liệu người dùng nhập; phần gợi ý sáng tạo do Gemini AI đề xuất và cần người dùng kiểm duyệt trước khi xuất bản.',
+  };
+}
+
 async function generateScriptsWithGeminiApi(input: {
   productName: string; brand: string; industry: string; description: string; highlights: string[];
   videoType: string; targetAudience: string; style: string; durationSec: number; language: string;
-}, apiKey: string, modelName = 'gemini-3.8-flash') {
-  const sceneCount = input.durationSec <= 15 ? 3 : input.durationSec <= 30 ? 5 : input.durationSec <= 45 ? 6 : input.durationSec <= 60 ? 7 : 9;
+}, apiKey: string, requestedModel = DEFAULT_GEMINI_MODEL) {
+  const sceneCount = input.durationSec <= 12 ? 2 : input.durationSec <= 20 ? 3 : input.durationSec <= 35 ? 4 : input.durationSec <= 50 ? 5 : 6;
   const prompt = [
     `Tạo 2 phương án kịch bản video sản phẩm bằng ${input.language === 'en' ? 'Tiếng Anh' : 'Tiếng Việt'}, tổng thời lượng mỗi phương án đúng ${input.durationSec} giây, mỗi phương án gồm khoảng ${sceneCount} phân cảnh.`,
     `Loại video: ${input.videoType}`, `Ngành hàng: ${input.industry}`, `Tên sản phẩm: ${input.productName}`,
@@ -556,6 +748,7 @@ async function generateScriptsWithGeminiApi(input: {
     `Đối tượng khách hàng: ${input.targetAudience || 'Khách hàng quan tâm sản phẩm'}`, `Phong cách: ${input.style}`,
     'Không tự bịa thông số, chứng nhận, công dụng hoặc cam kết không có trong dữ liệu. Nội dung ngắn gọn, tự nhiên, có mở đầu thu hút, trình bày lợi ích và kết thúc bằng CTA.',
     'Tổng thời lượng các cảnh phải bằng chính xác thời lượng mục tiêu. narration là lời thoại, onScreenText là chữ ngắn hiển thị trên màn hình.',
+    'sceneTitle là tên ngắn của cảnh; sceneRole chỉ chọn: intro, usp, detail, lifestyle, cta, showcase.',
     'motionType chỉ chọn: zoom-in, zoom-out, pan-left, pan-right, parallax, rotate-showcase.',
     'transitionType chỉ chọn: fade, slide, zoom-cut.', 'lightingEffect chỉ chọn: studio-glow, warm-gold, neon-rim, clean.',
     'Chỉ trả về JSON đúng cấu trúc được yêu cầu, không thêm markdown.',
@@ -565,39 +758,20 @@ async function generateScriptsWithGeminiApi(input: {
     items: { type: 'OBJECT', properties: {
       variantName: { type: 'STRING' }, hookSummary: { type: 'STRING' }, ctaText: { type: 'STRING' },
       scenes: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
-        sortOrder: { type: 'INTEGER' }, durationSec: { type: 'NUMBER' }, narration: { type: 'STRING' },
-        onScreenText: { type: 'STRING' }, motionType: { type: 'STRING' }, transitionType: { type: 'STRING' },
+        sortOrder: { type: 'INTEGER' }, durationSec: { type: 'NUMBER' }, sceneTitle: { type: 'STRING' }, sceneRole: { type: 'STRING' },
+        narration: { type: 'STRING' }, onScreenText: { type: 'STRING' }, motionType: { type: 'STRING' }, transitionType: { type: 'STRING' },
         lightingEffect: { type: 'STRING' }, visualPrompt: { type: 'STRING' }, musicMood: { type: 'STRING' },
-      }, required: ['sortOrder','durationSec','narration','onScreenText','motionType','transitionType','lightingEffect','visualPrompt','musicMood'] } },
+      }, required: ['sortOrder','durationSec','sceneTitle','sceneRole','narration','onScreenText','motionType','transitionType','lightingEffect','visualPrompt','musicMood'] } },
     }, required: ['variantName','hookSummary','ctaText','scenes'] },
   };
-  let response: Response;
-  try {
-    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: 'Bạn là biên kịch video quảng cáo sản phẩm chuyên nghiệp. Viết kịch bản trung thực, súc tích, có tính thương mại nhưng không phóng đại hoặc bịa đặt dữ kiện.' }] },
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: 'application/json', responseSchema, temperature: 0.7 },
-      }),
-      signal: AbortSignal.timeout(45000),
-    });
-  } catch (fetchErr) {
-    if (fetchErr instanceof Error && (fetchErr.name === 'AbortError' || fetchErr.name === 'TimeoutError')) {
-      throw new Error('Hết thời gian chờ phản hồi từ Gemini API.');
-    }
-    throw new Error(fetchErr instanceof Error ? fetchErr.message : 'Không kết nối được tới Gemini API.');
-  }
-  const rawBody = await response.text();
-  const payload = safeJsonParse<{
-    error?: { message?: string };
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  } | null>(rawBody, null);
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `Gemini API trả về HTTP ${response.status}.`);
-  }
-  const responseText = payload?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim() || '';
+  const { payload, model } = await callGeminiGenerateContent(apiKey, requestedModel, {
+    systemInstruction: { parts: [{ text: 'Bạn là biên kịch video quảng cáo sản phẩm chuyên nghiệp. Viết kịch bản trung thực, súc tích, có tính thương mại nhưng không phóng đại hoặc bịa đặt dữ kiện.' }] },
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { responseMimeType: 'application/json', responseSchema },
+  });
+
+  const candidates = (payload as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates;
+  const responseText = candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim() || '';
   if (!responseText) throw new Error('Gemini không trả về nội dung kịch bản.');
   let parsedRaw: unknown;
   try {
@@ -614,6 +788,7 @@ async function generateScriptsWithGeminiApi(input: {
   const allowedMotion = ['zoom-in','zoom-out','pan-left','pan-right','parallax','rotate-showcase'];
   const allowedTransition = ['fade','slide','zoom-cut'];
   const allowedLighting = ['studio-glow','warm-gold','neon-rim','clean'];
+  const allowedRoles = ['intro','usp','detail','lifestyle','cta','showcase'];
   const variants = parsed.slice(0,2).map((rawVariant, variantIndex) => {
     const variant = (rawVariant && typeof rawVariant === 'object' ? rawVariant : {}) as {
       variantName?: string; hookSummary?: string; ctaText?: string; scenes?: Array<Record<string, unknown>>;
@@ -621,9 +796,12 @@ async function generateScriptsWithGeminiApi(input: {
     if (!Array.isArray(variant.scenes) || variant.scenes.length === 0) throw new Error(`Phương án ${variantIndex + 1} không có phân cảnh.`);
     const { sourceScenes, durations } = normalizeSceneDurations(variant.scenes, input.durationSec);
     const scenes = sourceScenes.map((scene,index) => {
-      const motion=String(scene.motionType||''), transition=String(scene.transitionType||''), lighting=String(scene.lightingEffect||'');
+      const motion=String(scene.motionType||''), transition=String(scene.transitionType||''), lighting=String(scene.lightingEffect||''), role=String(scene.sceneRole||'');
       return {
-        sortOrder:index, durationSec: durations[index], narration:String(scene.narration||''), onScreenText:String(scene.onScreenText||''),
+        sortOrder:index, durationSec: durations[index],
+        sceneTitle: String(scene.sceneTitle || (index === 0 ? 'Mở đầu thu hút' : index === sourceScenes.length - 1 ? 'Kết & CTA' : `Điểm nhấn ${index}`)),
+        sceneRole: allowedRoles.includes(role) ? role : (index === 0 ? 'intro' : index === sourceScenes.length - 1 ? 'cta' : 'usp'),
+        narration:String(scene.narration||''), onScreenText:String(scene.onScreenText||''),
         motionType:allowedMotion.includes(motion)?motion:'zoom-in',
         transitionType:allowedTransition.includes(transition)?transition:'fade',
         lightingEffect:allowedLighting.includes(lighting)?lighting:'studio-glow',
@@ -632,7 +810,7 @@ async function generateScriptsWithGeminiApi(input: {
     });
     return { variantName:String(variant.variantName||`Phương án ${variantIndex+1}`), hookSummary:String(variant.hookSummary||''), ctaText:String(variant.ctaText||'Khám phá ngay'), scenes };
   });
-  return { mode:'gemini' as const, model:modelName, variants };
+  return { mode:'gemini' as const, model, variants };
 }
 
 async function uploadToImageKit(
@@ -672,6 +850,100 @@ async function uploadVideoToImageKit(env: Env, file: File): Promise<{ url: strin
   const result = await resp.json() as { url: string; fileId: string };
   if (!result.url || !result.fileId) throw new HttpError(502, 'ImageKit trả về thông tin tệp không hợp lệ.');
   return { url: result.url, fileId: result.fileId };
+}
+
+async function storeVideoChunksInD1(
+  env: Env,
+  scope: 'scene' | 'project',
+  ownerUserId: string,
+  targetId: string,
+  file: File
+): Promise<{ url: string; fileId: string }> {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  if (buf.byteLength <= 0 || buf.byteLength > 8 * 1024 * 1024) {
+    throw new HttpError(413, 'Video vượt quá giới hạn 8MB cho bộ nhớ đệm nội bộ khi chưa bật ImageKit.');
+  }
+  const chunkRawBytes = 300 * 1024; // ~400KB base64, well below D1 1MB statement/column cap
+  const totalChunks = Math.ceil(buf.byteLength / chunkRawBytes);
+  const now = new Date().toISOString();
+  const metaKey = `video_media_meta:${scope}:${targetId}`;
+  const prevMeta = await env.DB.prepare('SELECT value_json FROM system_settings WHERE key=?').bind(metaKey).first<{ value_json: string }>();
+  const oldInfo = safeJsonParse<{ totalChunks?: number } | null>(prevMeta?.value_json, null);
+  if (oldInfo?.totalChunks) {
+    for (let i = 0; i < oldInfo.totalChunks; i++) {
+      await env.DB.prepare('DELETE FROM system_settings WHERE key=?').bind(`video_media_chunk:${scope}:${targetId}:${i}`).run();
+    }
+  }
+  for (let i = 0; i < totalChunks; i++) {
+    const slice = buf.subarray(i * chunkRawBytes, Math.min((i + 1) * chunkRawBytes, buf.byteLength));
+    let bin = '';
+    for (let j = 0; j < slice.length; j += 0x8000) {
+      bin += String.fromCharCode(...slice.subarray(j, Math.min(j + 0x8000, slice.length)));
+    }
+    await env.DB.prepare('INSERT OR REPLACE INTO system_settings(key,value_json,updated_at) VALUES(?,?,?)')
+      .bind(`video_media_chunk:${scope}:${targetId}:${i}`, btoa(bin), now)
+      .run();
+  }
+  await env.DB.prepare('INSERT OR REPLACE INTO system_settings(key,value_json,updated_at) VALUES(?,?,?)')
+    .bind(
+      metaKey,
+      JSON.stringify({ userId: ownerUserId, mimeType: file.type || 'video/webm', sizeBytes: buf.byteLength, totalChunks, updatedAt: now }),
+      now
+    )
+    .run();
+  const route = scope === 'scene' ? `/api/media/scene-video/${targetId}` : `/api/media/project-video/${targetId}`;
+  return { url: `${route}?v=${Date.now()}`, fileId: `d1-${scope}-${targetId}` };
+}
+
+async function serveChunkedVideo(env: Env, request: Request, actor: UserRow, scope: 'scene' | 'project', targetId: string) {
+  const metaRow = await env.DB.prepare('SELECT value_json FROM system_settings WHERE key=?')
+    .bind(`video_media_meta:${scope}:${targetId}`)
+    .first<{ value_json: string }>();
+  const meta = safeJsonParse<{ userId?: string; mimeType?: string; sizeBytes?: number; totalChunks?: number } | null>(metaRow?.value_json, null);
+  if (!meta || !meta.totalChunks || !meta.sizeBytes) return fail('Không tìm thấy tệp video đã lưu.', 404);
+  if (meta.userId !== actor.id && roleRank(actor.role) < roleRank('ADMIN')) {
+    return fail('Bạn không có quyền truy cập video này.', 403);
+  }
+  const combined = new Uint8Array(meta.sizeBytes);
+  let offset = 0;
+  for (let i = 0; i < meta.totalChunks; i++) {
+    const chunkRow = await env.DB.prepare('SELECT value_json FROM system_settings WHERE key=?')
+      .bind(`video_media_chunk:${scope}:${targetId}:${i}`)
+      .first<{ value_json: string }>();
+    if (!chunkRow?.value_json) return fail('Dữ liệu video bị gián đoạn.', 404);
+    const bin = atob(chunkRow.value_json);
+    for (let j = 0; j < bin.length && offset < combined.length; j++) {
+      combined[offset++] = bin.charCodeAt(j);
+    }
+  }
+  const rangeHeader = request.headers.get('range');
+  const contentType = meta.mimeType || 'video/webm';
+  if (rangeHeader) {
+    const m = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+    if (m) {
+      const start = Math.min(combined.length - 1, Math.max(0, Number(m[1])));
+      const end = m[2] ? Math.min(combined.length - 1, Math.max(start, Number(m[2]))) : combined.length - 1;
+      return new Response(combined.subarray(start, end + 1), {
+        status: 206,
+        headers: {
+          'content-type': contentType,
+          'content-range': `bytes ${start}-${end}/${combined.length}`,
+          'accept-ranges': 'bytes',
+          'content-length': String(end - start + 1),
+          'cache-control': 'private, no-store',
+        },
+      });
+    }
+  }
+  return new Response(combined, {
+    status: 200,
+    headers: {
+      'content-type': contentType,
+      'accept-ranges': 'bytes',
+      'content-length': String(combined.length),
+      'cache-control': 'private, no-store',
+    },
+  });
 }
 
 async function handleApi(request: Request, env: Env): Promise<Response> {
@@ -1044,6 +1316,16 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       });
     }
 
+    const sceneVideoMediaMatch = path.match(/^\/api\/media\/scene-video\/([0-9a-f-]+)$/);
+    if (sceneVideoMediaMatch && request.method === 'GET') {
+      return serveChunkedVideo(env, request, actor, 'scene', sceneVideoMediaMatch[1]);
+    }
+
+    const projectVideoMediaMatch = path.match(/^\/api\/media\/project-video\/([0-9a-f-]+)$/);
+    if (projectVideoMediaMatch && request.method === 'GET') {
+      return serveChunkedVideo(env, request, actor, 'project', projectVideoMediaMatch[1]);
+    }
+
     // Serve stored product image (protected by ownership or admin)
     const mediaMatch = path.match(/^\/api\/media\/([0-9a-f-]+)$/);
     if (mediaMatch && request.method === 'GET') {
@@ -1353,7 +1635,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         displayName: m.display_name,
         category: m.category,
         provider: m.provider,
-        modelName: m.model_name,
+        modelName: m.module_key.startsWith('gemini') ? normalizeGeminiModel(m.model_name) : m.model_name,
         isEnabled: Boolean(m.is_enabled),
         isPaid: Boolean(m.is_paid),
         fallbackMode: m.fallback_mode,
@@ -1376,6 +1658,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       }));
       return json({
         modules,
+        geminiConfigured: Boolean(env.GEMINI_API_KEY),
         storage: {
           provider: env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT ? 'imagekit' : 'd1-inline',
           imagekitConfigured: Boolean(env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT),
@@ -1399,53 +1682,83 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
       const highlights = safeJsonParse<string[]>(String(product.highlights_json || '[]'), []);
       const modCfg = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='gemini_analysis'").first<AIConfigRow>();
-      const primaryImg = images.results[0];
 
-      let imageBase64 = primaryImg?.data_base64 || undefined;
-      let imageMimeType = primaryImg?.mime_type || undefined;
-      // Fetch ImageKit-backed images only from the configured CDN origin.
-      if (!imageBase64 && primaryImg?.image_url && env.IMAGEKIT_URL_ENDPOINT) {
-        try {
-          const imageUrl = new URL(String(primaryImg.image_url));
-          if (imageUrl.origin !== new URL(env.IMAGEKIT_URL_ENDPOINT).origin) throw new Error('Image URL is outside the configured ImageKit origin.');
-          const imageResponse = await fetch(imageUrl.toString(), { redirect: 'error' });
-          if (!imageResponse.ok) throw new Error(`ImageKit image fetch failed (${imageResponse.status}).`);
-          const mime = (imageResponse.headers.get('content-type') || imageMimeType || '').split(';')[0].toLowerCase();
-          if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(mime)) throw new Error('Unsupported image content type.');
-          const imageBytes = new Uint8Array(await imageResponse.arrayBuffer());
-          if (imageBytes.byteLength > 5 * 1024 * 1024) throw new Error('Image exceeds the 5MB analysis limit.');
-          let binary = '';
-          for (let offset = 0; offset < imageBytes.length; offset += 0x8000) binary += String.fromCharCode(...imageBytes.subarray(offset, Math.min(offset + 0x8000, imageBytes.length)));
-          imageBase64 = btoa(binary);
-          imageMimeType = mime;
-        } catch (imageError) {
-          console.warn('Gemini image retrieval skipped; using text-only product data:', imageError);
+      const loadedVisionImages: Array<{ base64: string; mimeType: string }> = [];
+      for (const imgRow of images.results.slice(0, 4)) {
+        let base64Val = imgRow.data_base64 || '';
+        let mimeVal = (imgRow.mime_type || 'image/jpeg').toLowerCase();
+        if (mimeVal === 'image/jpg') mimeVal = 'image/jpeg';
+        if (!base64Val && imgRow.image_url && env.IMAGEKIT_URL_ENDPOINT) {
+          try {
+            const imageUrl = new URL(String(imgRow.image_url));
+            if (imageUrl.origin === new URL(env.IMAGEKIT_URL_ENDPOINT).origin) {
+              const imageResponse = await fetch(imageUrl.toString(), { redirect: 'error' });
+              if (imageResponse.ok) {
+                const respMime = (imageResponse.headers.get('content-type') || mimeVal).split(';')[0].toLowerCase();
+                if (['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(respMime)) {
+                  const imageBytes = new Uint8Array(await imageResponse.arrayBuffer());
+                  if (imageBytes.byteLength <= 4 * 1024 * 1024) {
+                    let binary = '';
+                    for (let offset = 0; offset < imageBytes.length; offset += 0x8000) {
+                      binary += String.fromCharCode(...imageBytes.subarray(offset, Math.min(offset + 0x8000, imageBytes.length)));
+                    }
+                    base64Val = btoa(binary);
+                    mimeVal = respMime === 'image/jpg' ? 'image/jpeg' : respMime;
+                  }
+                }
+              }
+            }
+          } catch (imageError) {
+            console.warn('Gemini image retrieval skipped for an image:', imageError);
+          }
+        }
+        if (base64Val && ['image/jpeg', 'image/png', 'image/webp'].includes(mimeVal)) {
+          loadedVisionImages.push({ base64: base64Val, mimeType: mimeVal });
         }
       }
+
+      const configuredAnalysisModel = normalizeGeminiModel(modCfg?.model_name);
       const inputPayload = {
         name: String(product.name), brand: String(product.brand || ''), industry: String(product.industry),
         description: String(product.description || ''), highlights, extraInfo: String(product.extra_info || ''),
-        imageBase64, imageMimeType,
+        imageBase64: loadedVisionImages[0]?.base64,
+        imageMimeType: loadedVisionImages[0]?.mimeType,
+        images: loadedVisionImages,
+        modelName: configuredAnalysisModel,
       };
 
       let analysis: unknown;
-      if (modCfg?.is_enabled && env.GEMINI_API_KEY && env.AI_CALLER?.analyzeProduct && await aiModuleWithinLimits(env, modCfg)) {
+      let fallbackReason = '';
+      if (!modCfg?.is_enabled) {
+        fallbackReason = 'Mô-đun Gemini Phân tích sản phẩm đang được tắt trong Quản trị AI.';
+      } else if (modCfg.is_paid) {
+        fallbackReason = 'Mô-đun Gemini Phân tích sản phẩm đang gắn cờ trả phí.';
+      } else if (!env.GEMINI_API_KEY) {
+        fallbackReason = 'Máy chủ chưa được cấu hình GEMINI_API_KEY (Cloudflare Worker Secret / biến môi trường).';
+      } else if (!(await aiModuleWithinLimits(env, modCfg))) {
+        fallbackReason = 'Mô-đun Gemini Phân tích sản phẩm đã đạt giới hạn sử dụng.';
+      }
+
+      if (!fallbackReason && env.GEMINI_API_KEY) {
         try {
-          analysis = await env.AI_CALLER.analyzeProduct(inputPayload);
-          await logAiUsage(env, actor.id, 'gemini_analysis', 'google-genai', modCfg.model_name, 'analyze-product', 'SUCCESS', 650, 0);
-          await env.DB.prepare("UPDATE ai_configs SET last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_analysis'")
-            .bind(new Date().toISOString())
+          analysis = env.AI_CALLER?.analyzeProduct
+            ? await env.AI_CALLER.analyzeProduct(inputPayload)
+            : await analyzeProductWithGeminiApi(inputPayload, env.GEMINI_API_KEY, configuredAnalysisModel);
+          await logAiUsage(env, actor.id, 'gemini_analysis', 'google-genai', configuredAnalysisModel, 'analyze-product', 'SUCCESS', 650, 0);
+          await env.DB.prepare("UPDATE ai_configs SET model_name=?,last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_analysis'")
+            .bind(configuredAnalysisModel, new Date().toISOString())
             .run();
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Gemini API error';
-          await logAiUsage(env, actor.id, 'gemini_analysis', 'google-genai', modCfg.model_name, 'analyze-product', 'FALLBACK', 0, 0, msg);
+          fallbackReason = formatGeminiFallbackReason(msg);
+          await logAiUsage(env, actor.id, 'gemini_analysis', 'google-genai', configuredAnalysisModel, 'analyze-product', 'FALLBACK', 0, 0, msg);
           await env.DB.prepare("UPDATE ai_configs SET last_status='ERROR',last_error=?,updated_at=? WHERE module_key='gemini_analysis'")
             .bind(msg.slice(0, 300), new Date().toISOString())
             .run();
           analysis = buildStructuredFreeAnalysis({ ...inputPayload, imageCount: images.results.length });
         }
       } else {
-        await logAiUsage(env, actor.id, 'gemini_analysis', 'rule-based-free', 'structured-free', 'analyze-product', 'FALLBACK', 0, 0);
+        await logAiUsage(env, actor.id, 'gemini_analysis', 'rule-based-free', 'structured-free', 'analyze-product', 'FALLBACK', 0, 0, fallbackReason || null);
         analysis = buildStructuredFreeAnalysis({ ...inputPayload, imageCount: images.results.length });
       }
 
@@ -1453,7 +1766,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .bind(JSON.stringify(analysis), new Date().toISOString(), productId, actor.id)
         .run();
 
-      return json({ analysis });
+      return json({ analysis, ...(fallbackReason ? { fallbackReason } : {}) });
     }
 
     if (path === '/api/ai/generate-script' && request.method === 'POST') {
@@ -1465,7 +1778,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const videoType = str(data.videoType) || 'Advertisement';
       const targetAudience = str(data.targetAudience) || '';
       const style = str(data.style) || 'Hiện đại, chuyên nghiệp';
-      const durationSec = Math.min(90, Math.max(15, num(data.durationSec, 30)));
+      const durationSec = Math.min(90, Math.max(4, Math.round(num(data.durationSec, 30))));
       const language = str(data.language) === 'en' ? 'en' : 'vi';
 
       if (!productId && !standaloneTitle) {
@@ -1517,7 +1830,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       } else if (modCfg.is_paid) {
         fallbackReason = 'Mô-đun Gemini Viết kịch bản đang gắn cờ trả phí; hệ thống sử dụng kịch bản cấu trúc miễn phí.';
       } else if (!env.GEMINI_API_KEY) {
-        fallbackReason = 'Máy chủ chưa được cấu hình GEMINI_API_KEY.';
+        fallbackReason = 'Máy chủ chưa được cấu hình GEMINI_API_KEY (Cloudflare Worker Secret / biến môi trường).';
       } else {
         try {
           useGemini = await aiModuleWithinLimits(env, modCfg);
@@ -1529,8 +1842,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       }
 
       if (useGemini && env.GEMINI_API_KEY) {
-        const configuredModel = str(modCfg?.model_name) || 'gemini-3.8-flash';
-        const modelName = configuredModel.startsWith('models/') ? configuredModel.slice('models/'.length) : configuredModel;
+        const modelName = normalizeGeminiModel(modCfg?.model_name);
         try {
           const generated = env.AI_CALLER?.generateScripts
             ? await env.AI_CALLER.generateScripts({ ...inputPayload, modelName })
@@ -1545,11 +1857,11 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           result = generated;
           await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', modelName, 'generate-script', 'SUCCESS', 900, 0)
             .catch(logError => console.warn('Could not record successful Gemini usage:', logError));
-          await env.DB.prepare("UPDATE ai_configs SET last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
-            .bind(new Date().toISOString()).run().catch(configError => console.warn('Could not update Gemini script status:', configError));
+          await env.DB.prepare("UPDATE ai_configs SET model_name=?,last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
+            .bind(modelName, new Date().toISOString()).run().catch(configError => console.warn('Could not update Gemini script status:', configError));
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Gemini script error';
-          fallbackReason = msg;
+          fallbackReason = formatGeminiFallbackReason(msg);
           console.error('Gemini script generation failed; using structured fallback:', msg);
           await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', modelName, 'generate-script', 'FALLBACK', 0, 0, msg)
             .catch(logError => console.warn('Could not record Gemini fallback:', logError));
@@ -1577,7 +1889,8 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const requestedIndustry = str(data.industry);
       const instruction = str(data.instruction);
       const scene = data.scene && typeof data.scene === 'object' ? data.scene as Record<string, unknown> : {};
-      if (!imageId && !directImageUrl) return fail('Thiếu ảnh phân cảnh để phân tích.');
+      const currentStage = scene.stageConfig && typeof scene.stageConfig === 'object' ? scene.stageConfig as Record<string, unknown> : {};
+      if (!imageId && !directImageUrl && !instruction) return fail('Thiếu ảnh phân cảnh hoặc yêu cầu chỉnh sửa.');
       if (instruction.length > 1200) return fail('Yêu cầu chỉnh sửa tối đa 1.200 ký tự.');
 
       let product: Record<string, unknown> | null = null;
@@ -1628,24 +1941,130 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         if (!mimeType && respContentType) mimeType = respContentType === 'image/jpg' ? 'image/jpeg' : respContentType;
         const imageBuffer = await imageResponse.arrayBuffer();
         if (imageBuffer.byteLength > 5 * 1024 * 1024) return fail('Ảnh phân cảnh vượt quá giới hạn 5MB.');
-        const bytes = new Uint8Array(imageBuffer);
+        const imgBytes = new Uint8Array(imageBuffer);
         let binary = '';
-        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        for (let offset = 0; offset < imgBytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...imgBytes.subarray(offset, Math.min(offset + 0x8000, imgBytes.length)));
         }
         imageBase64 = btoa(binary);
       }
 
       if (mimeType === 'image/jpg') mimeType = 'image/jpeg';
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
-        return fail('Định dạng ảnh phân cảnh không được hỗ trợ.');
-      }
-      if (!imageBase64) return fail('Ảnh phân cảnh chưa có dữ liệu để phân tích.');
+
+      // Helper for explicit natural-language stage/layout commands when Gemini API is unavailable
+      const applyRuleBasedInstruction = (instr: string) => {
+        const lower = instr.toLowerCase();
+        const nextStage: Record<string, unknown> = { ...currentStage };
+        const changes: string[] = [];
+        let showOnScreenText = scene.showOnScreenText === false ? false : true;
+        let motionType = str(scene.motionType) || 'zoom-in';
+        let lightingEffect = str(scene.lightingEffect) || 'studio-glow';
+        let transitionType = str(scene.transitionType) || 'fade';
+        let narration = str(scene.narration);
+        let onScreenText = str(scene.onScreenText);
+
+        if (/(không|ẩn|tắt|bỏ)\s*(hiển thị\s*)?(chữ|text)/i.test(lower)) {
+          showOnScreenText = false;
+          changes.push('Ẩn chữ trên màn hình phân cảnh này');
+        } else if (/(hiện|bật|thêm)\s*(chữ|text)/i.test(lower)) {
+          showOnScreenText = true;
+          changes.push('Bật hiển thị chữ trên phân cảnh');
+        }
+        if (/(lớn hơn|to hơn|phóng to|gần hơn|cận cảnh|tăng kích thước|kích thước lớn|làm to)/i.test(lower)) {
+          const curScale = Number(currentStage.productScale) || 1;
+          nextStage.productScale = Number(Math.min(1.35, curScale + 0.15).toFixed(2));
+          changes.push(`Tăng kích thước sản phẩm lên ${nextStage.productScale}x`);
+        } else if (/(nhỏ hơn|thu nhỏ|xa hơn|giảm kích thước|kích thước nhỏ)/i.test(lower)) {
+          const curScale = Number(currentStage.productScale) || 1;
+          nextStage.productScale = Number(Math.max(0.65, curScale - 0.15).toFixed(2));
+          changes.push(`Thu gọn kích thước sản phẩm còn ${nextStage.productScale}x`);
+        }
+        if (/(chậm|mượt|nhẹ nhàng|êm)/i.test(lower)) {
+          nextStage.motionSpeed = 0.65;
+          motionType = 'parallax';
+          changes.push('Giảm tốc độ chuyển động camera (0.65x mượt mà)');
+        } else if (/(nhanh|sôi động|mạnh)/i.test(lower)) {
+          nextStage.motionSpeed = 1.3;
+          motionType = 'zoom-in';
+          transitionType = 'zoom-cut';
+          changes.push('Tăng nhịp chuyển động camera (1.3x)');
+        }
+        if (/(sang trọng|cao cấp|ấm|vàng|luxury)/i.test(lower)) {
+          lightingEffect = 'warm-gold';
+          nextStage.lightingPreset = 'golden-hour';
+          nextStage.backdropStyle = 'luxury-pedestal';
+          changes.push('Áp dụng ánh sáng vàng sang trọng & bục trưng bày luxury');
+        } else if (/(sáng|tối giản|sạch|minimal)/i.test(lower)) {
+          lightingEffect = 'clean';
+          nextStage.lightingPreset = 'soft-studio';
+          nextStage.backdropStyle = 'minimal-studio';
+          changes.push('Chuyển nền studio sáng tối giản');
+        } else if (/(công nghệ|neon|hiện đại|tech)/i.test(lower)) {
+          lightingEffect = 'neon-rim';
+          nextStage.lightingPreset = 'cool-tech';
+          nextStage.backdropStyle = 'tech-grid';
+          changes.push('Chuyển không gian công nghệ Neon Rim');
+        }
+        if (/(tách nền|bối cảnh|studio|đổi nền|thay nền)/i.test(lower)) {
+          nextStage.bgMode = 'cutout-studio';
+          if (!nextStage.backdropStyle) nextStage.backdropStyle = 'auto-industry';
+          changes.push('Bật tách nền sản phẩm & đặt trên sân khấu Studio 2.5D');
+        } else if (/(ảnh gốc|giữ nền)/i.test(lower)) {
+          nextStage.bgMode = 'original';
+          changes.push('Khôi phục hiển thị ảnh gốc');
+        }
+        if (/(ngắn gọn|súc tích|rút ngắn)/i.test(lower) && narration.length > 60) {
+          narration = narration.split(/[.!?]/)[0].trim() + '.';
+          onScreenText = onScreenText.slice(0, 36);
+          changes.push('Rút gọn lời thoại súc tích hơn');
+        }
+        return {
+          narration,
+          onScreenText,
+          showOnScreenText,
+          visualPrompt: str(scene.visualPrompt),
+          motionType,
+          transitionType,
+          lightingEffect,
+          stageConfig: nextStage,
+          changeSummary: changes.length ? changes.join('; ') : 'Đã giữ nguyên thông số phân cảnh.',
+          hasMatchedCommand: changes.length > 0,
+        };
+      };
 
       const config = await env.DB.prepare("SELECT * FROM ai_configs WHERE module_key='gemini_script'").first<AIConfigRow>();
       if (!config?.is_enabled) return fail('Mô-đun Gemini viết kịch bản đang được quản trị viên tắt.', 503);
       if (config.is_paid) return fail('Mô-đun Gemini hiện được cấu hình là dịch vụ trả phí. Đã chặn để tránh phát sinh chi phí.', 403);
-      if (!env.GEMINI_API_KEY) return fail('Chưa cấu hình Gemini API Key cho chức năng phân tích ảnh phân cảnh.', 503);
+
+      if (!env.GEMINI_API_KEY) {
+        if (instruction.trim()) {
+          const fallbackApplied = applyRuleBasedInstruction(instruction);
+          if (fallbackApplied.hasMatchedCommand) {
+            return json({
+              scene: {
+                narration: fallbackApplied.narration,
+                onScreenText: fallbackApplied.onScreenText,
+                showOnScreenText: fallbackApplied.showOnScreenText,
+                visualPrompt: fallbackApplied.visualPrompt,
+                motionType: fallbackApplied.motionType,
+                transitionType: fallbackApplied.transitionType,
+                lightingEffect: fallbackApplied.lightingEffect,
+                stageConfig: fallbackApplied.stageConfig,
+              },
+              mode: 'rule-based-assistant',
+              model: 'rule-based-nlp',
+              changeSummary: fallbackApplied.changeSummary,
+              fallbackReason: 'Máy chủ chưa gắn GEMINI_API_KEY nên đã áp dụng lệnh bố cục trực tiếp (không sử dụng thị giác Gemini).',
+              reviewedRequired: true,
+            });
+          }
+        }
+        return fail('Máy chủ chưa được cấu hình GEMINI_API_KEY để phân tích ảnh phân cảnh.', 503);
+      }
+
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType) || !imageBase64) {
+        return fail('Ảnh phân cảnh chưa hợp lệ hoặc chưa có dữ liệu để phân tích.');
+      }
       if (!(await aiModuleWithinLimits(env, config))) return fail('Mô-đun Gemini đã đạt hạn mức ngày/tháng.', 429);
 
       const subjectName = String(product?.name || projectTitle || 'Sản phẩm');
@@ -1655,55 +2074,108 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const subjectHighlights = product ? safeJsonParse<string[]>(String(product.highlights_json || '[]'), []).join('; ') : '';
 
       const prompt = [
-        'Bạn là đạo diễn nội dung video quảng cáo sản phẩm. Phân tích trực tiếp hình ảnh đính kèm và tạo hoặc chỉnh sửa đúng một phân cảnh.',
+        'Bạn là đạo diễn hình ảnh & nội dung video quảng cáo sản phẩm. Phân tích trực tiếp hình ảnh đính kèm và CHỈ chỉnh sửa đúng một phân cảnh này theo yêu cầu.',
         'Chỉ mô tả những gì nhìn thấy trong ảnh; không tự suy diễn công dụng, thông số, chất liệu hoặc chứng nhận không thể xác minh.',
         `Sản phẩm / chủ đề: ${subjectName}; thương hiệu: ${subjectBrand}; ngành hàng: ${subjectIndustry}.`,
         `Mô tả đã xác nhận: ${subjectDesc}.`,
         `Điểm nổi bật do người dùng cung cấp: ${subjectHighlights || 'Dựa trên hình ảnh đính kèm'}.`,
-        `Nội dung cảnh hiện tại: ${JSON.stringify({ narration: str(scene.narration), onScreenText: str(scene.onScreenText), visualPrompt: str(scene.visualPrompt), durationSec: num(scene.durationSec, 5) })}.`,
-        instruction ? `Yêu cầu chỉnh sửa của người dùng: ${instruction}` : 'Hãy phân tích ảnh và đề xuất lời thoại, chữ ngắn trên màn hình và hướng hình ảnh phù hợp với ảnh.',
+        `Nội dung & thông số sân khấu hiện tại: ${JSON.stringify({
+          narration: str(scene.narration),
+          onScreenText: str(scene.onScreenText),
+          showOnScreenText: scene.showOnScreenText !== false,
+          visualPrompt: str(scene.visualPrompt),
+          durationSec: num(scene.durationSec, 5),
+          motionType: str(scene.motionType),
+          lightingEffect: str(scene.lightingEffect),
+          stageConfig: currentStage,
+        })}.`,
+        instruction ? `Yêu cầu chỉnh sửa của người dùng: ${instruction}` : 'Hãy phân tích ảnh và đề xuất lời thoại, chữ ngắn trên màn hình, bố cục sân khấu và hiệu ứng phù hợp với ảnh.',
         `Ngôn ngữ đầu ra: ${str(data.language) === 'en' ? 'English' : 'Tiếng Việt'}.`,
-        'Trả về JSON hợp lệ gồm narration, onScreenText, visualPrompt, motionType, transitionType, lightingEffect.',
+        'Trả về JSON hợp lệ gồm: narration, onScreenText, showOnScreenText (boolean), visualPrompt, motionType, transitionType, lightingEffect, sceneTitle, changeSummary, và object stageConfig (bgMode: "original"|"cutout-studio", backdropStyle: "auto-industry"|"luxury-pedestal"|"minimal-studio"|"tech-grid"|"warm-lifestyle"|"botanical-fresh", productScale: 0.65..1.35, shadowIntensity: 0..1, lightingPreset: "soft-studio"|"golden-hour"|"editorial-contrast"|"cool-tech", motionSpeed: 0.5..1.5).',
         'motionType chỉ được là zoom-in, zoom-out, pan-left, pan-right, parallax, rotate-showcase.',
         'transitionType chỉ được là fade, slide, zoom-cut.',
         'lightingEffect chỉ được là studio-glow, warm-gold, neon-rim, clean.',
-        'Lời thoại tự nhiên, phù hợp thời lượng cảnh; onScreenText ngắn gọn. Không thêm giải thích ngoài JSON.',
+        'Không thêm giải thích ngoài JSON.',
       ].join('\n');
 
       try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model_name)}:generateContent`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: imageBase64 } }, { text: prompt }] }],
-            generationConfig: { responseMimeType: 'application/json', temperature: 0.55 },
-          }),
+        const { payload, model } = await callGeminiGenerateContent(env.GEMINI_API_KEY, config.model_name, {
+          contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: imageBase64 } }, { text: prompt }] }],
+          generationConfig: { responseMimeType: 'application/json' },
         });
-        if (!response.ok) throw new Error(`Gemini API HTTP ${response.status}: ${(await response.text()).slice(0, 240)}`);
-        const payload = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-        const responseText = payload.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim() || '';
-        const parsed = JSON.parse(responseText) as Record<string, unknown>;
+        const candidates = (payload as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates;
+        const responseText = candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim() || '';
+        const parsed = JSON.parse(stripJsonFences(responseText)) as Record<string, unknown>;
         const motions = ['zoom-in','zoom-out','pan-left','pan-right','parallax','rotate-showcase'];
         const transitions = ['fade','slide','zoom-cut'];
         const lights = ['studio-glow','warm-gold','neon-rim','clean'];
+        const backdrops = ['auto-industry','luxury-pedestal','minimal-studio','tech-grid','warm-lifestyle','botanical-fresh'];
+        const lightingPresets = ['soft-studio','golden-hour','editorial-contrast','cool-tech'];
+        const rawStage = parsed.stageConfig && typeof parsed.stageConfig === 'object' ? parsed.stageConfig as Record<string, unknown> : {};
+        const nextStageConfig = {
+          ...currentStage,
+          ...(rawStage.bgMode === 'cutout-studio' || rawStage.bgMode === 'original' ? { bgMode: rawStage.bgMode } : {}),
+          ...(backdrops.includes(str(rawStage.backdropStyle)) ? { backdropStyle: str(rawStage.backdropStyle) } : {}),
+          ...(lightingPresets.includes(str(rawStage.lightingPreset)) ? { lightingPreset: str(rawStage.lightingPreset) } : {}),
+          ...(typeof rawStage.productScale === 'number' && Number.isFinite(rawStage.productScale)
+            ? { productScale: Math.min(1.35, Math.max(0.65, Number(rawStage.productScale.toFixed(2)))) }
+            : {}),
+          ...(typeof rawStage.shadowIntensity === 'number' && Number.isFinite(rawStage.shadowIntensity)
+            ? { shadowIntensity: Math.min(1, Math.max(0, Number(rawStage.shadowIntensity.toFixed(2)))) }
+            : {}),
+          ...(typeof rawStage.motionSpeed === 'number' && Number.isFinite(rawStage.motionSpeed)
+            ? { motionSpeed: Math.min(1.5, Math.max(0.5, Number(rawStage.motionSpeed.toFixed(2)))) }
+            : {}),
+        };
         const resultScene = {
+          sceneTitle: str(parsed.sceneTitle) || str(scene.sceneTitle),
           narration: str(parsed.narration) || str(scene.narration),
-          onScreenText: str(parsed.onScreenText) || str(scene.onScreenText),
+          onScreenText: parsed.onScreenText !== undefined ? str(parsed.onScreenText) : str(scene.onScreenText),
+          showOnScreenText: typeof parsed.showOnScreenText === 'boolean' ? parsed.showOnScreenText : scene.showOnScreenText !== false,
           visualPrompt: str(parsed.visualPrompt) || str(scene.visualPrompt),
           motionType: motions.includes(str(parsed.motionType)) ? str(parsed.motionType) : str(scene.motionType) || 'zoom-in',
           transitionType: transitions.includes(str(parsed.transitionType)) ? str(parsed.transitionType) : str(scene.transitionType) || 'fade',
           lightingEffect: lights.includes(str(parsed.lightingEffect)) ? str(parsed.lightingEffect) : str(scene.lightingEffect) || 'studio-glow',
+          stageConfig: nextStageConfig,
         };
-        await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', config.model_name, 'scene-assist', 'SUCCESS', imageBase64.length, 0);
-        await env.DB.prepare("UPDATE ai_configs SET last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
-          .bind(new Date().toISOString()).run();
-        return json({ scene: resultScene, model: config.model_name, reviewedRequired: true });
+        await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', model, 'scene-assist', 'SUCCESS', imageBase64.length, 0);
+        await env.DB.prepare("UPDATE ai_configs SET model_name=?,last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
+          .bind(model, new Date().toISOString()).run();
+        return json({
+          scene: resultScene,
+          mode: 'gemini',
+          model,
+          changeSummary: str(parsed.changeSummary) || 'Đã phân tích ảnh và cập nhật phân cảnh bằng Gemini.',
+          reviewedRequired: true,
+        });
       } catch (sceneError) {
         const message = sceneError instanceof Error ? sceneError.message : 'Gemini scene analysis failed';
-        await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', config.model_name, 'scene-assist', 'ERROR', 0, 0, message);
+        await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', normalizeGeminiModel(config.model_name), 'scene-assist', 'ERROR', 0, 0, message);
         await env.DB.prepare("UPDATE ai_configs SET last_status='ERROR',last_error=?,updated_at=? WHERE module_key='gemini_script'")
           .bind(message.slice(0, 300), new Date().toISOString()).run();
-        return fail(`Không thể phân tích/chỉnh sửa phân cảnh: ${message.slice(0, 220)}`, 502);
+        if (instruction.trim()) {
+          const fallbackApplied = applyRuleBasedInstruction(instruction);
+          if (fallbackApplied.hasMatchedCommand) {
+            return json({
+              scene: {
+                narration: fallbackApplied.narration,
+                onScreenText: fallbackApplied.onScreenText,
+                showOnScreenText: fallbackApplied.showOnScreenText,
+                visualPrompt: fallbackApplied.visualPrompt,
+                motionType: fallbackApplied.motionType,
+                transitionType: fallbackApplied.transitionType,
+                lightingEffect: fallbackApplied.lightingEffect,
+                stageConfig: fallbackApplied.stageConfig,
+              },
+              mode: 'rule-based-assistant',
+              model: 'rule-based-nlp',
+              changeSummary: fallbackApplied.changeSummary,
+              fallbackReason: formatGeminiFallbackReason(message),
+              reviewedRequired: true,
+            });
+          }
+        }
+        return fail(`Không thể phân tích/chỉnh sửa phân cảnh: ${formatGeminiFallbackReason(message)}`, 502);
       }
     }
 
@@ -1718,59 +2190,63 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       }
       if (!env.GEMINI_API_KEY) {
         await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', 'gemini-3.8-flash-lite-tts', 'tts', 'UNAVAILABLE', 0, 0, 'GEMINI_API_KEY not configured');
-        return json({ available: false, reason: 'Chưa cấu hình khóa Gemini API cho chức năng tạo giọng đọc.', fallback: 'browser-speech-or-silent' });
+        return json({ available: false, reason: 'Chưa cấu hình khóa Gemini API (GEMINI_API_KEY) cho chức năng tạo giọng đọc.', fallback: 'browser-speech-or-silent' });
       }
       const data = await body(request);
       const text = str(data.text);
       const voice = str(data.voice) || 'vi-female-young';
       if (!text || text.length > 2000) return fail('Nội dung đọc phải từ 1 đến 2000 ký tự.');
       const voiceMap: Record<string, { voice: string; style: string }> = {
-        'vi-female-young': { voice: 'Aoede', style: 'Natural, youthful Vietnamese female voice; clear, warm, friendly delivery.' },
+        'vi-female-young': { voice: 'Kore', style: 'Natural, youthful Vietnamese female voice; clear, warm, friendly delivery.' },
         'vi-male-pro': { voice: 'Charon', style: 'Professional Vietnamese male voice; confident, clear, measured delivery.' },
         'vi-female-luxury': { voice: 'Kore', style: 'Elegant Vietnamese female voice; calm, refined, premium commercial delivery.' },
         'vi-ad-energetic': { voice: 'Puck', style: 'Energetic Vietnamese advertising voice; bright, lively, engaging delivery.' },
-        'vi-review-natural': { voice: 'Aoede', style: 'Conversational Vietnamese review voice; natural, sincere, easy to listen to.' },
+        'vi-review-natural': { voice: 'Zephyr', style: 'Conversational Vietnamese review voice; natural, sincere, easy to listen to.' },
       };
       const selectedVoice = voiceMap[voice] || voiceMap['vi-female-young'];
+      const ttsModel = 'gemini-3.8-flash-lite-tts';
       try {
-        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+        // Primary: standard generateContent audio endpoint per Gemini 3.8 TTS SDK spec
+        const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${ttsModel}:generateContent`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
           body: JSON.stringify({
-            model: 'gemini-3.8-flash-lite-tts',
-            input: [{
-              type: 'user_input',
-              content: [{
-                type: 'text',
-                text,
-                annotations: [{ type: 'speech_metadata', style: selectedVoice.style }],
-              }],
+            contents: [{
+              role: 'user',
+              parts: [{ text: `[Style: ${selectedVoice.style}] ${text}` }],
             }],
-            response_format: { type: 'audio' },
-            generation_config: { speech_config: [{ voice: selectedVoice.voice }] },
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: selectedVoice.voice },
+                },
+              },
+            },
           }),
+          signal: AbortSignal.timeout(45000),
         });
-        if (!resp.ok) throw new Error(`Gemini TTS HTTP ${resp.status}: ${(await resp.text()).slice(0, 400)}`);
+        if (!resp.ok) throw new Error(`Gemini TTS HTTP ${resp.status}: ${(await resp.text()).slice(0, 320)}`);
         const payload = await resp.json() as {
-          output_audio?: { data?: string; mime_type?: string };
-          outputAudio?: { data?: string; mimeType?: string };
-          interaction?: { output_audio?: { data?: string; mime_type?: string }; outputAudio?: { data?: string; mimeType?: string } };
-          output?: Array<{ type?: string; data?: string; mime_type?: string; mimeType?: string }>;
+          candidates?: Array<{
+            content?: {
+              parts?: Array<{
+                inlineData?: { data?: string; mimeType?: string };
+                inline_data?: { data?: string; mime_type?: string };
+              }>;
+            };
+          }>;
         };
-        const audioPart = (payload.output_audio || payload.outputAudio || payload.interaction?.output_audio || payload.interaction?.outputAudio) as { data?: string; mime_type?: string; mimeType?: string } | undefined;
-        const outputAudio = audioPart?.data
-          ? { data: audioPart.data, mimeType: audioPart.mime_type || audioPart.mimeType || 'audio/wav' }
-          : payload.output?.find(part => part.type === 'audio' && part.data)
-            ? { data: payload.output.find(part => part.type === 'audio' && part.data)!.data!, mimeType: payload.output.find(part => part.type === 'audio' && part.data)!.mime_type || payload.output.find(part => part.type === 'audio' && part.data)!.mimeType || 'audio/wav' }
-            : null;
-        if (!outputAudio?.data) throw new Error('Gemini TTS không trả về dữ liệu âm thanh.');
-        await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', 'gemini-3.8-flash-lite-tts', 'tts', 'SUCCESS', text.length, 0);
-        await env.DB.prepare("UPDATE ai_configs SET provider='google-gemini',model_name='gemini-3.8-flash-lite-tts',last_status='READY',last_error=NULL,updated_at=? WHERE module_key='kokoro_tts'")
-          .bind(new Date().toISOString()).run();
-        return json({ available: true, mimeType: outputAudio.mimeType, audioBase64: outputAudio.data, provider: 'Gemini TTS' });
+        const part = payload.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data || p.inline_data?.data);
+        const inline = part?.inlineData || (part?.inline_data ? { data: part.inline_data.data, mimeType: part.inline_data.mime_type } : null);
+        if (!inline?.data) throw new Error('Gemini TTS không trả về dữ liệu âm thanh.');
+        await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', ttsModel, 'tts', 'SUCCESS', text.length, 0);
+        await env.DB.prepare("UPDATE ai_configs SET provider='google-gemini',model_name=?,last_status='READY',last_error=NULL,updated_at=? WHERE module_key='kokoro_tts'")
+          .bind(ttsModel, new Date().toISOString()).run();
+        return json({ available: true, mimeType: inline.mimeType || 'audio/wav', audioBase64: inline.data, provider: 'Gemini TTS' });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Gemini TTS error';
-        await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', 'gemini-3.8-flash-lite-tts', 'tts', 'ERROR', 0, 0, msg);
+        await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', ttsModel, 'tts', 'ERROR', 0, 0, msg);
         await env.DB.prepare("UPDATE ai_configs SET last_status='ERROR',last_error=?,updated_at=? WHERE module_key='kokoro_tts'")
           .bind(msg.slice(0, 300), new Date().toISOString()).run();
         return json({ available: false, reason: `Gemini TTS chưa tạo được giọng đọc: ${msg}`, fallback: 'browser-speech-or-silent' });
@@ -1945,8 +2421,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
       for (let i = 0; i < scenes.length; i++) {
         const s = scenes[i] as Record<string, unknown>;
+        const stageConfigJson = s.stageConfig && typeof s.stageConfig === 'object' ? JSON.stringify(s.stageConfig) : '{}';
         await env.DB.prepare(
-          'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,scene_role,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,stage_config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
           .bind(
             str(s.id) || uuid(),
@@ -1954,6 +2431,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             str(s.productId) || productId,
             i,
             Math.min(30, Math.max(2, num(s.durationSec, 5))),
+            str(s.sceneRole) || 'showcase',
             str(s.narration),
             str(s.onScreenText),
             s.showOnScreenText === false ? 0 : 1,
@@ -1966,6 +2444,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             str(s.lightingEffect) || 'studio-glow',
             str(s.visualPrompt),
             str(s.musicMood) || 'upbeat',
+            stageConfigJson,
             now,
             now
           )
@@ -2028,6 +2507,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             productName: s.scene_product_name || null,
             sortOrder: s.sort_order,
             durationSec: s.duration_sec,
+            sceneRole: (s.scene_role as string) || 'showcase',
             narration: s.narration,
             onScreenText: s.on_screen_text,
             showOnScreenText: s.show_on_screen_text === null || s.show_on_screen_text === undefined ? true : Boolean(s.show_on_screen_text),
@@ -2040,6 +2520,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             lightingEffect: s.lighting_effect,
             visualPrompt: s.visual_prompt,
             musicMood: s.music_mood,
+            stageConfig: safeJsonParse(String(s.stage_config_json || '{}'), {}),
           })),
           jobs: jobsRows.results,
           sceneReviews: sceneReviewsRows.results.map(review => ({
@@ -2116,8 +2597,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           await env.DB.prepare('DELETE FROM video_scenes WHERE project_id=?').bind(projectId).run();
           for (let i = 0; i < incomingScenes.length; i++) {
             const s = incomingScenes[i] as Record<string, unknown>;
+            const stageConfigJson = s.stageConfig && typeof s.stageConfig === 'object' ? JSON.stringify(s.stageConfig) : '{}';
             await env.DB.prepare(
-              'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+              'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,scene_role,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,stage_config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
             )
               .bind(
                 str(s.id) || uuid(),
@@ -2125,6 +2607,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
                 str(s.productId) || productId,
                 i,
                 Math.min(30, Math.max(2, num(s.durationSec, 5))),
+                str(s.sceneRole) || 'showcase',
                 str(s.narration),
                 str(s.onScreenText),
                 s.showOnScreenText === false ? 0 : 1,
@@ -2139,6 +2622,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
                 str(s.lightingEffect) || 'studio-glow',
                 str(s.visualPrompt),
                 str(s.musicMood) || 'upbeat',
+                stageConfigJson,
                 now,
                 now
               )
@@ -2168,17 +2652,26 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const signature = str(form.get('sceneSignature'));
       const resolution = ['480p','720p','1080p'].includes(str(form.get('resolution'))) ? str(form.get('resolution')) : '720p';
       if (!(file instanceof File)) return fail('Không tìm thấy tệp video phân cảnh.');
-      if (!['video/mp4','video/webm'].includes(file.type)) return fail('Chỉ hỗ trợ video MP4 hoặc WebM.');
+      if (!['video/mp4','video/webm'].some(t => file.type.startsWith(t))) return fail('Chỉ hỗ trợ video MP4 hoặc WebM.');
       if (file.size <= 0 || file.size > 50 * 1024 * 1024) return fail('Video phân cảnh phải có dung lượng tối đa 50MB.');
       if (!signature || signature.length > 8000) return fail('Thiếu thông tin phiên bản nội dung phân cảnh.');
-      const uploaded = await uploadVideoToImageKit(env, file);
+
+      let uploaded: { url: string; fileId: string };
+      let storageProvider: 'imagekit' | 'd1-chunked' = 'imagekit';
+      if (env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT) {
+        uploaded = await uploadVideoToImageKit(env, file);
+      } else {
+        uploaded = await storeVideoChunksInD1(env, 'scene', actor.id, sceneId, file);
+        storageProvider = 'd1-chunked';
+      }
+
       const now = new Date().toISOString();
-      const format = file.type === 'video/mp4' ? 'mp4' : 'webm';
+      const format = file.type.includes('mp4') ? 'mp4' : 'webm';
       await env.DB.prepare(
         "INSERT INTO video_scene_reviews(scene_id,project_id,user_id,status,output_file_url,output_imagekit_file_id,file_size_bytes,format,resolution,scene_signature,updated_at) VALUES(?,?,?,'PENDING',?,?,?,?,?,?,?) ON CONFLICT(scene_id) DO UPDATE SET project_id=excluded.project_id,user_id=excluded.user_id,status='PENDING',output_file_url=excluded.output_file_url,output_imagekit_file_id=excluded.output_imagekit_file_id,file_size_bytes=excluded.file_size_bytes,format=excluded.format,resolution=excluded.resolution,scene_signature=excluded.scene_signature,updated_at=excluded.updated_at"
       ).bind(sceneId, projectId, actor.id, uploaded.url, uploaded.fileId, file.size, format, resolution, signature, now).run();
-      await audit(env, actor.id, null, 'VIDEO_SCENE_OUTPUT_STORED', { projectId, sceneId, fileSizeBytes: file.size });
-      return json({ sceneId, status: 'PENDING', outputFileUrl: uploaded.url, fileSizeBytes: file.size, format, resolution, sceneSignature: signature });
+      await audit(env, actor.id, null, 'VIDEO_SCENE_OUTPUT_STORED', { projectId, sceneId, fileSizeBytes: file.size, storageProvider });
+      return json({ sceneId, status: 'PENDING', outputFileUrl: uploaded.url, fileSizeBytes: file.size, format, resolution, sceneSignature: signature, storageProvider });
     }
 
     const sceneReviewMatch = path.match(/^\/api\/projects\/([0-9a-f-]+)\/scenes\/([0-9a-f-]+)\/review$/);
@@ -2238,7 +2731,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .all<Record<string, unknown>>();
       for (const s of scenes.results) {
         await env.DB.prepare(
-          'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO video_scenes(id,project_id,product_id,sort_order,duration_sec,scene_role,narration,on_screen_text,show_on_screen_text,image_id,image_url,ai_video_url,source_type,motion_type,transition_type,lighting_effect,visual_prompt,music_mood,stage_config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
           .bind(
             uuid(),
@@ -2246,6 +2739,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             s.product_id || src.product_id,
             s.sort_order,
             s.duration_sec,
+            s.scene_role || 'showcase',
             s.narration,
             s.on_screen_text,
             s.show_on_screen_text === 0 ? 0 : 1,
@@ -2258,6 +2752,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             s.lighting_effect,
             s.visual_prompt,
             s.music_mood,
+            s.stage_config_json || '{}',
             now,
             now
           )
@@ -2353,16 +2848,23 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const form = await request.formData();
       const file = form.get('file');
       if (!(file instanceof File)) return fail('Không tìm thấy tệp video cần lưu.');
-      if (!['video/mp4', 'video/webm'].includes(file.type)) return fail('Chỉ hỗ trợ video MP4 hoặc WebM.');
+      if (!['video/mp4', 'video/webm'].some(t => file.type.startsWith(t))) return fail('Chỉ hỗ trợ video MP4 hoặc WebM.');
       if (file.size <= 0 || file.size > 50 * 1024 * 1024) return fail('Video phải có dung lượng từ 1 byte đến tối đa 50MB.');
-      const uploaded = await uploadVideoToImageKit(env, file);
+      let uploaded: { url: string; fileId: string };
+      let storageProvider: 'imagekit' | 'd1-chunked' = 'imagekit';
+      if (env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT) {
+        uploaded = await uploadVideoToImageKit(env, file);
+      } else {
+        uploaded = await storeVideoChunksInD1(env, 'project', actor.id, projectId, file);
+        storageProvider = 'd1-chunked';
+      }
       const now = new Date().toISOString();
       await env.DB.prepare('UPDATE video_jobs SET output_file_url=?,output_imagekit_file_id=?,file_size_bytes=? WHERE id=? AND project_id=? AND user_id=?')
         .bind(uploaded.url, uploaded.fileId, file.size, jobId, projectId, actor.id).run();
       await env.DB.prepare('UPDATE video_projects SET output_file_url=?,output_imagekit_file_id=?,updated_at=? WHERE id=? AND user_id=?')
         .bind(uploaded.url, uploaded.fileId, now, projectId, actor.id).run();
-      await audit(env, actor.id, null, 'VIDEO_OUTPUT_STORED', { projectId, jobId, fileSizeBytes: file.size });
-      return json({ stored: true, outputFileUrl: uploaded.url, fileSizeBytes: file.size });
+      await audit(env, actor.id, null, 'VIDEO_OUTPUT_STORED', { projectId, jobId, fileSizeBytes: file.size, storageProvider });
+      return json({ stored: true, outputFileUrl: uploaded.url, fileSizeBytes: file.size, storageProvider });
     }
 
     // ==================== ADMIN & SUPER ADMIN ROUTES ====================

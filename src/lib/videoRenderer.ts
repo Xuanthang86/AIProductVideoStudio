@@ -1,5 +1,6 @@
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
-import type { AspectRatio, MusicConfig, VideoScene } from '../types';
+import { getProductCutout, type CutoutResult } from './backgroundRemoval';
+import type { AspectRatio, MusicConfig, SceneBackdropStyle, SceneLightingPreset, SceneStageConfig, VideoScene } from '../types';
 
 export type RenderResolution = '480p' | '720p' | '1080p';
 
@@ -33,6 +34,29 @@ export interface DeviceSafetyReport {
   webCodecsSupported: boolean;
   recommendedResolution: RenderResolution;
   warning: string | null;
+}
+
+/**
+ * Fix Chromium MediaRecorder WebM duration = Infinity on <video> preview players.
+ */
+export function applyVideoDurationWorkaround(vid: HTMLVideoElement | null) {
+  if (!vid) return;
+  if (vid.duration === Infinity) {
+    const onSeeked = () => {
+      vid.removeEventListener('timeupdate', onSeeked);
+      try {
+        vid.currentTime = 0;
+      } catch {
+        // Ignore seek constraint errors on streaming media
+      }
+    };
+    vid.addEventListener('timeupdate', onSeeked);
+    try {
+      vid.currentTime = 1e10;
+    } catch {
+      vid.removeEventListener('timeupdate', onSeeked);
+    }
+  }
 }
 
 export function getResolutionDimensions(aspectRatio: AspectRatio, resolution: RenderResolution): { width: number; height: number } {
@@ -100,10 +124,22 @@ async function loadVideoElement(url: string): Promise<HTMLVideoElement | null> {
   if (!url) return null;
   return new Promise(resolve => {
     const video = document.createElement('video');
-    video.crossOrigin = 'anonymous'; video.muted = true; video.loop = true;
-    video.playsInline = true; video.preload = 'auto';
-    video.onloadeddata = () => resolve(video); video.onerror = () => resolve(null);
-    video.src = url; video.load();
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    const timeout = window.setTimeout(() => resolve(null), 15000);
+    video.onloadeddata = () => {
+      window.clearTimeout(timeout);
+      resolve(video);
+    };
+    video.onerror = () => {
+      window.clearTimeout(timeout);
+      resolve(null);
+    };
+    video.src = url;
+    video.load();
   });
 }
 
@@ -125,6 +161,245 @@ function wrapTextLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: nu
   return lines;
 }
 
+interface IndustryVisualProfile {
+  defaultBackdrop: Exclude<SceneBackdropStyle, 'auto-industry'>;
+  bgTop: string;
+  bgMid: string;
+  bgBottom: string;
+  accent: string;
+  glow: string;
+  pedestalTop: string;
+  pedestalSide: string;
+  lightMode: boolean;
+}
+
+function resolveIndustryProfile(industry: string | undefined, lightingEffect: VideoScene['lightingEffect'], stage?: SceneStageConfig): IndustryVisualProfile {
+  const normalized = (industry || '').toLowerCase();
+  let autoBackdrop: Exclude<SceneBackdropStyle, 'auto-industry'> = 'luxury-pedestal';
+  let base: IndustryVisualProfile = {
+    defaultBackdrop: 'luxury-pedestal',
+    bgTop: '#0e1b33',
+    bgMid: '#18305b',
+    bgBottom: '#0b1426',
+    accent: '#4a85f6',
+    glow: 'rgba(74, 133, 246, 0.28)',
+    pedestalTop: 'rgba(255, 255, 255, 0.22)',
+    pedestalSide: 'rgba(13, 26, 51, 0.72)',
+    lightMode: false,
+  };
+
+  if (/mỹ phẩm|skincare|làm đẹp|nước hoa|beauty|cosmetic/.test(normalized)) {
+    autoBackdrop = 'botanical-fresh';
+    base = {
+      defaultBackdrop: 'botanical-fresh',
+      bgTop: '#241a29',
+      bgMid: '#3a2a3f',
+      bgBottom: '#16111c',
+      accent: '#f2b880',
+      glow: 'rgba(242, 184, 128, 0.26)',
+      pedestalTop: 'rgba(255, 243, 232, 0.26)',
+      pedestalSide: 'rgba(34, 22, 38, 0.72)',
+      lightMode: false,
+    };
+  } else if (/điện tử|công nghệ|tech|phụ kiện|gadget/.test(normalized)) {
+    autoBackdrop = 'tech-grid';
+    base = {
+      defaultBackdrop: 'tech-grid',
+      bgTop: '#070f20',
+      bgMid: '#10254a',
+      bgBottom: '#060c18',
+      accent: '#38bdf8',
+      glow: 'rgba(56, 189, 248, 0.28)',
+      pedestalTop: 'rgba(125, 211, 252, 0.24)',
+      pedestalSide: 'rgba(9, 20, 42, 0.84)',
+      lightMode: false,
+    };
+  } else if (/thực phẩm|đồ uống|food|drink|sức khỏe|organic/.test(normalized)) {
+    autoBackdrop = 'warm-lifestyle';
+    base = {
+      defaultBackdrop: 'warm-lifestyle',
+      bgTop: '#1f261e',
+      bgMid: '#323f2c',
+      bgBottom: '#131912',
+      accent: '#84cc16',
+      glow: 'rgba(163, 230, 53, 0.22)',
+      pedestalTop: 'rgba(245, 250, 230, 0.24)',
+      pedestalSide: 'rgba(23, 31, 20, 0.76)',
+      lightMode: false,
+    };
+  } else if (/thời trang|giày|túi|nội thất|fashion|furniture/.test(normalized)) {
+    autoBackdrop = 'minimal-studio';
+    base = {
+      defaultBackdrop: 'minimal-studio',
+      bgTop: '#191d26',
+      bgMid: '#2a3140',
+      bgBottom: '#12151c',
+      accent: '#e2c290',
+      glow: 'rgba(226, 194, 144, 0.22)',
+      pedestalTop: 'rgba(255, 255, 255, 0.2)',
+      pedestalSide: 'rgba(24, 28, 36, 0.78)',
+      lightMode: false,
+    };
+  }
+
+  // Override with explicit backdrop style or lighting preset / lightingEffect
+  const backdrop = stage?.backdropStyle && stage.backdropStyle !== 'auto-industry' ? stage.backdropStyle : autoBackdrop;
+  base.defaultBackdrop = backdrop;
+
+  if (lightingEffect === 'clean') {
+    base.bgTop = '#f4f7fc';
+    base.bgMid = '#e4ecf8';
+    base.bgBottom = '#d5e2f5';
+    base.accent = '#2563eb';
+    base.glow = 'rgba(37, 99, 235, 0.16)';
+    base.pedestalTop = 'rgba(255, 255, 255, 0.92)';
+    base.pedestalSide = 'rgba(195, 210, 232, 0.85)';
+    base.lightMode = true;
+  } else if (lightingEffect === 'warm-gold' || stage?.lightingPreset === 'golden-hour') {
+    base.bgTop = '#1f1722';
+    base.bgMid = '#382933';
+    base.bgBottom = '#130e16';
+    base.accent = '#f5c469';
+    base.glow = 'rgba(245, 196, 105, 0.28)';
+    base.lightMode = false;
+  } else if (lightingEffect === 'neon-rim' || stage?.lightingPreset === 'cool-tech') {
+    base.bgTop = '#071226';
+    base.bgMid = '#0f2854';
+    base.bgBottom = '#060c1a';
+    base.accent = '#38bdf8';
+    base.glow = 'rgba(56, 189, 248, 0.30)';
+    base.lightMode = false;
+  } else if (stage?.lightingPreset === 'editorial-contrast') {
+    base.bgTop = '#0e1118';
+    base.bgMid = '#1c2230';
+    base.bgBottom = '#07090e';
+    base.accent = '#f8fafc';
+    base.glow = 'rgba(248, 250, 252, 0.18)';
+    base.lightMode = false;
+  }
+
+  return base;
+}
+
+function drawStudioBackdrop(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  profile: IndustryVisualProfile,
+  lightingPreset: SceneLightingPreset | undefined,
+  t: number,
+  stageCx: number,
+  stageCy: number,
+  stageRadius: number,
+  drawPedestal: boolean
+) {
+  // Base studio cyclorama gradient
+  const bg = ctx.createLinearGradient(0, 0, w, h);
+  bg.addColorStop(0, profile.bgTop);
+  bg.addColorStop(0.55, profile.bgMid);
+  bg.addColorStop(1, profile.bgBottom);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+
+  // Key studio radial aura behind product stage
+  const driftX = Math.sin(t * Math.PI * 2) * w * 0.025;
+  const glow = ctx.createRadialGradient(stageCx + driftX, stageCy * 0.92, stageRadius * 0.08, stageCx, stageCy, stageRadius * 1.45);
+  glow.addColorStop(0, profile.glow);
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, w, h);
+
+  // Backdrop motif
+  const motif = profile.defaultBackdrop;
+  ctx.save();
+  if (motif === 'tech-grid') {
+    ctx.strokeStyle = profile.lightMode ? 'rgba(37, 99, 235, 0.08)' : 'rgba(125, 211, 252, 0.10)';
+    ctx.lineWidth = 1;
+    const step = Math.max(26, Math.round(Math.min(w, h) * 0.065));
+    for (let x = 0; x <= w; x += step) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= h; y += step) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+  } else if (motif === 'botanical-fresh' || motif === 'warm-lifestyle') {
+    // Soft out-of-focus studio bokeh circles
+    const blobs = [
+      { x: stageCx - stageRadius * 0.95, y: stageCy - stageRadius * 0.72, r: stageRadius * 0.36, a: 0.13 },
+      { x: stageCx + stageRadius * 0.9, y: stageCy - stageRadius * 0.5, r: stageRadius * 0.28, a: 0.11 },
+      { x: stageCx + stageRadius * 0.65, y: stageCy + stageRadius * 0.58, r: stageRadius * 0.24, a: 0.1 },
+    ];
+    for (let i = 0; i < blobs.length; i++) {
+      const b = blobs[i];
+      const offset = Math.sin(t * Math.PI * 2 + i) * w * 0.015;
+      const rad = ctx.createRadialGradient(b.x + offset, b.y, 0, b.x + offset, b.y, b.r);
+      rad.addColorStop(0, profile.lightMode ? `rgba(37, 99, 235, ${b.a})` : `rgba(255, 235, 205, ${b.a})`);
+      rad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = rad;
+      ctx.beginPath();
+      ctx.arc(b.x + offset, b.y, b.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else {
+    // Minimal studio subtle concentric rim halo
+    ctx.strokeStyle = profile.lightMode ? 'rgba(16, 29, 54, 0.07)' : 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = Math.max(1.5, w * 0.0025);
+    ctx.beginPath();
+    ctx.arc(stageCx, stageCy, stageRadius * 0.92, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Rim lighting highlight sweep
+  if (lightingPreset === 'golden-hour' || lightingPreset === 'cool-tech') {
+    const rimGrad = ctx.createLinearGradient(0, 0, w, h * 0.65);
+    rimGrad.addColorStop(0, lightingPreset === 'golden-hour' ? 'rgba(251,191,36,0.14)' : 'rgba(56,189,248,0.14)');
+    rimGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rimGrad;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  // 2.5D Display Pedestal for Cutout Studio Mode
+  if (drawPedestal) {
+    const pedW = stageRadius * 1.48;
+    const pedH = Math.max(18, stageRadius * 0.22);
+    const pedY = stageCy + stageRadius * 0.68;
+
+    // Horizon shelf reflection
+    const floorGrad = ctx.createLinearGradient(0, pedY - pedH * 0.4, 0, h);
+    floorGrad.addColorStop(0, profile.lightMode ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.04)');
+    floorGrad.addColorStop(1, profile.lightMode ? 'rgba(210,224,245,0.45)' : 'rgba(0,0,0,0.34)');
+    ctx.fillStyle = floorGrad;
+    ctx.fillRect(0, pedY - pedH * 0.35, w, h - (pedY - pedH * 0.35));
+
+    // Pedestal cylinder side
+    ctx.fillStyle = profile.pedestalSide;
+    ctx.beginPath();
+    ctx.ellipse(stageCx, pedY + pedH * 0.85, pedW * 0.5, pedH * 0.46, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(stageCx - pedW * 0.5, pedY, pedW, pedH * 0.85);
+
+    // Pedestal top rim
+    const topGrad = ctx.createLinearGradient(stageCx - pedW * 0.5, pedY, stageCx + pedW * 0.5, pedY);
+    topGrad.addColorStop(0, profile.pedestalTop);
+    topGrad.addColorStop(0.5, profile.lightMode ? '#ffffff' : 'rgba(255,255,255,0.36)');
+    topGrad.addColorStop(1, profile.pedestalTop);
+    ctx.fillStyle = topGrad;
+    ctx.beginPath();
+    ctx.ellipse(stageCx, pedY, pedW * 0.5, pedH * 0.48, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = profile.lightMode ? 'rgba(16,29,54,0.12)' : 'rgba(255,255,255,0.24)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 export function drawSceneFrame(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -137,87 +412,160 @@ export function drawSceneFrame(
     totalScenes: number;
     productName: string;
     ctaText: string;
+    industry?: string;
     showSubtitles?: boolean;
+    cutoutCache?: Map<string, CutoutResult>;
   }
 ) {
-  const { scene, image, sceneProgress, sceneIndex, totalScenes, productName, ctaText, showSubtitles = true } = options;
-  const t = Math.max(0, Math.min(1, sceneProgress));
+  const {
+    scene,
+    image,
+    sceneProgress,
+    sceneIndex,
+    totalScenes,
+    productName,
+    ctaText,
+    industry,
+    showSubtitles = true,
+    cutoutCache,
+  } = options;
+  const rawT = Math.max(0, Math.min(1, sceneProgress));
+  const stage = scene.stageConfig || {};
+  const motionSpeed = Math.min(1.6, Math.max(0.5, Number(stage.motionSpeed) || 1));
+  const t = Math.min(1, rawT * (0.85 + 0.15 * motionSpeed));
 
-  // Background palette based on lightingEffect
-  const bg = ctx.createLinearGradient(0, 0, width, height);
-  if (scene.lightingEffect === 'warm-gold') {
-    bg.addColorStop(0, '#1c1824');
-    bg.addColorStop(0.55, '#2b2435');
-    bg.addColorStop(1, '#121521');
-  } else if (scene.lightingEffect === 'neon-rim') {
-    bg.addColorStop(0, '#0b152c');
-    bg.addColorStop(0.55, '#132955');
-    bg.addColorStop(1, '#091124');
-  } else if (scene.lightingEffect === 'clean') {
-    bg.addColorStop(0, '#eef3fb');
-    bg.addColorStop(1, '#dce7f8');
+  const isLandscape = width / Math.max(1, height) > 1.28;
+  const isCompactPortrait = height / Math.max(1, width) > 1.45;
+  const minEdge = Math.min(width, height);
+  const padX = Math.round(width * 0.055);
+  const topY = Math.round(height * 0.048);
+
+  const profile = resolveIndustryProfile(industry, scene.lightingEffect, stage);
+  const isLightBg = profile.lightMode;
+  const useCutoutStudio =
+    stage.bgMode === 'cutout-studio' &&
+    image instanceof HTMLImageElement &&
+    !scene.renderedClip;
+
+  // Determine layout zones based on aspect ratio so product & text NEVER overlap
+  const hasHeadline = !scene.renderedClip && scene.showOnScreenText !== false && Boolean(scene.onScreenText?.trim());
+  const hasSubtitle = !scene.renderedClip && showSubtitles && Boolean(scene.narration?.trim());
+  const hasCta = sceneIndex === totalScenes - 1 && Boolean(ctaText?.trim()) && rawT > 0.25;
+
+  // Stage box coordinates
+  let stageCx = width * 0.5;
+  let stageCy = height * 0.42;
+  let stageW = width * 0.78;
+  let stageH = height * 0.48;
+
+  if (scene.renderedClip) {
+    stageCx = width * 0.5;
+    stageCy = height * 0.5;
+    stageW = width;
+    stageH = height;
+  } else if (isLandscape && (hasHeadline || hasSubtitle || hasCta)) {
+    // 16:9 Split Stage: product showcased cleanly on left 52%, text & CTA on right 42%
+    stageCx = width * 0.3;
+    stageCy = height * 0.52;
+    stageW = width * 0.46;
+    stageH = height * 0.68;
+  } else if (isCompactPortrait) {
+    // 9:16 Portrait: product occupies upper-mid safe zone cleanly above headline/subtitles
+    stageCx = width * 0.5;
+    stageCy = height * (hasCta ? 0.37 : 0.40);
+    stageW = width * 0.82;
+    stageH = height * 0.44;
   } else {
-    bg.addColorStop(0, '#0f1c36');
-    bg.addColorStop(0.6, '#1a3260');
-    bg.addColorStop(1, '#0d172c');
+    // 1:1 and 4:5: balanced upper-center stage
+    stageCx = width * 0.5;
+    stageCy = height * 0.39;
+    stageW = width * 0.76;
+    stageH = height * 0.44;
   }
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, width, height);
 
-  // Subtle ambient radial glow
-  const glow = ctx.createRadialGradient(width * 0.5, height * 0.42, width * 0.05, width * 0.5, height * 0.42, width * 0.65);
-  glow.addColorStop(0, scene.lightingEffect === 'warm-gold' ? 'rgba(245,196,105,0.22)' : 'rgba(66,133,244,0.26)');
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, width, height);
+  const stageRadius = Math.min(stageW, stageH) * 0.54;
+  drawStudioBackdrop(ctx, width, height, profile, stage.lightingPreset, rawT, stageCx, stageCy, stageRadius, useCutoutStudio);
 
-  // Compute camera motion transform
-  let scale = 1.04;
+  // Camera 2.5D simulation transform
+  let scale = scene.renderedClip ? 1 : 1.02;
   let offsetX = 0;
   let offsetY = 0;
   let rotation = 0;
-  if (scene.motionType === 'zoom-in') {
-    scale = 1.0 + t * 0.14;
-  } else if (scene.motionType === 'zoom-out') {
-    scale = 1.15 - t * 0.13;
-  } else if (scene.motionType === 'pan-left') {
-    scale = 1.12;
-    offsetX = (0.5 - t) * width * 0.08;
-  } else if (scene.motionType === 'pan-right') {
-    scale = 1.12;
-    offsetX = (t - 0.5) * width * 0.08;
-  } else if (scene.motionType === 'parallax') {
-    scale = 1.1 + t * 0.06;
-    offsetY = (0.5 - t) * height * 0.05;
-  } else if (scene.motionType === 'rotate-showcase') {
-    scale = 1.06 + Math.sin(t * Math.PI) * 0.06;
-    rotation = (t - 0.5) * 0.05;
+
+  if (!scene.renderedClip) {
+    const amp = 0.75 + motionSpeed * 0.35;
+    if (scene.motionType === 'zoom-in') {
+      scale = 1.0 + t * 0.13 * amp;
+    } else if (scene.motionType === 'zoom-out') {
+      scale = 1.14 - t * 0.12 * amp;
+    } else if (scene.motionType === 'pan-left') {
+      scale = 1.08;
+      offsetX = (0.5 - t) * width * 0.055 * amp;
+    } else if (scene.motionType === 'pan-right') {
+      scale = 1.08;
+      offsetX = (t - 0.5) * width * 0.055 * amp;
+    } else if (scene.motionType === 'parallax') {
+      scale = 1.05 + Math.sin(t * Math.PI) * 0.04;
+      offsetY = Math.sin(t * Math.PI * 2) * height * 0.016 * amp;
+      offsetX = (t - 0.5) * width * 0.03 * amp;
+    } else if (scene.motionType === 'rotate-showcase') {
+      scale = 1.03 + Math.sin(t * Math.PI) * 0.05;
+      rotation = Math.sin(t * Math.PI * 2) * 0.024 * amp;
+      offsetY = -Math.sin(t * Math.PI) * height * 0.012;
+    }
   }
 
-  // Transition opacity & slide
+  // Transition entrance (never black-out approved clips so merged scenes flow smoothly)
   let alpha = 1;
   let transSlideX = 0;
-  if (t < 0.12) {
-    const enter = t / 0.12;
-    if (scene.transitionType === 'fade') alpha = enter;
-    if (scene.transitionType === 'slide') transSlideX = (1 - enter) * width * 0.08;
+  if (rawT < 0.09 && !scene.renderedClip) {
+    const enter = rawT / 0.09;
+    if (scene.transitionType === 'fade') alpha = 0.35 + enter * 0.65;
+    if (scene.transitionType === 'slide') transSlideX = (1 - enter) * width * 0.07;
     if (scene.transitionType === 'zoom-cut') scale *= 0.96 + enter * 0.04;
   }
 
+  const userScale = Math.min(1.45, Math.max(0.65, Number(stage.productScale) || 1));
+  const userOffsetX = (Math.min(25, Math.max(-25, Number(stage.productOffsetX) || 0)) / 100) * stageW;
+  const userOffsetY = (Math.min(25, Math.max(-25, Number(stage.productOffsetY) || 0)) / 100) * stageH;
+  const shadowStrength = Math.min(1, Math.max(0, stage.shadowIntensity !== undefined ? Number(stage.shadowIntensity) : 0.65));
+
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.translate(width / 2 + offsetX + transSlideX, scene.renderedClip ? height / 2 : height * 0.44 + offsetY);
+  ctx.translate(stageCx + offsetX + transSlideX + userOffsetX, stageCy + offsetY + userOffsetY);
   ctx.rotate(rotation);
-  ctx.scale(scale, scale);
-
-  const stageW = width * 0.78;
-  const stageH = height * 0.52;
+  ctx.scale(scale * userScale, scale * userScale);
 
   if (scene.renderedClip && image instanceof HTMLVideoElement) {
-    ctx.drawImage(image, -width / 2, -height / 2, width, height);
+    const vw = Math.max(1, image.videoWidth || width);
+    const vh = Math.max(1, image.videoHeight || height);
+    const fitScale = Math.min(width / vw, height / vh);
+    const drawW = vw * fitScale;
+    const drawH = vh * fitScale;
+    ctx.drawImage(image, -drawW / 2, -drawH / 2, drawW, drawH);
   } else if (image) {
-    const mediaWidth = image instanceof HTMLVideoElement ? image.videoWidth : image.naturalWidth;
-    const mediaHeight = image instanceof HTMLVideoElement ? image.videoHeight : image.naturalHeight;
+    let drawable: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement = image;
+    let mediaWidth = image instanceof HTMLVideoElement ? image.videoWidth : image.naturalWidth;
+    let mediaHeight = image instanceof HTMLVideoElement ? image.videoHeight : image.naturalHeight;
+    let cutoutUsed = false;
+
+    if (useCutoutStudio && image instanceof HTMLImageElement) {
+      const sourceKey = scene.imageId || scene.imageUrl || `scene-${sceneIndex}`;
+      const sens = stage.cutoutSensitivity ?? 28;
+      const cacheKey = `${sourceKey}|s=${sens}`;
+      let cutout = cutoutCache?.get(cacheKey);
+      if (!cutout) {
+        cutout = getProductCutout(image, sourceKey, { sensitivity: sens });
+        cutoutCache?.set(cacheKey, cutout);
+      }
+      if (cutout.cutoutApplied) {
+        drawable = cutout.canvas;
+        mediaWidth = cutout.canvas.width;
+        mediaHeight = cutout.canvas.height;
+        cutoutUsed = true;
+      }
+    }
+
     const imgRatio = mediaWidth / Math.max(1, mediaHeight);
     const boxRatio = stageW / stageH;
     let drawW = stageW;
@@ -228,136 +576,239 @@ export function drawSceneFrame(
       drawW = stageH * imgRatio;
     }
 
-    // Rounded product card shadow
-    ctx.save();
-    ctx.shadowColor = 'rgba(6, 15, 34, 0.42)';
-    ctx.shadowBlur = Math.round(width * 0.04);
-    ctx.shadowOffsetY = Math.round(height * 0.015);
-    const radius = Math.round(width * 0.035);
-    const rx = -drawW / 2;
-    const ry = -drawH / 2;
-    ctx.beginPath();
-    ctx.roundRect(rx, ry, drawW, drawH, radius);
-    ctx.clip();
-    ctx.drawImage(image, rx, ry, drawW, drawH);
-    ctx.restore();
+    if (cutoutUsed) {
+      // Grounding contact shadow on pedestal
+      if (shadowStrength > 0.02) {
+        ctx.save();
+        const shadowGrad = ctx.createRadialGradient(0, drawH * 0.49, 2, 0, drawH * 0.49, drawW * 0.48);
+        shadowGrad.addColorStop(0, `rgba(4, 10, 24, ${0.52 * shadowStrength})`);
+        shadowGrad.addColorStop(1, 'rgba(4, 10, 24, 0)');
+        ctx.fillStyle = shadowGrad;
+        ctx.beginPath();
+        ctx.ellipse(0, drawH * 0.49, drawW * 0.46, Math.max(8, drawH * 0.075), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.save();
+      ctx.shadowColor = `rgba(6, 15, 34, ${0.42 * shadowStrength})`;
+      ctx.shadowBlur = Math.round(minEdge * 0.045 * shadowStrength);
+      ctx.shadowOffsetY = Math.round(minEdge * 0.018 * shadowStrength);
+      ctx.drawImage(drawable, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
+    } else {
+      // Clean rounded product card preserving authentic product packaging/details
+      ctx.save();
+      ctx.shadowColor = `rgba(6, 15, 34, ${0.44 * shadowStrength})`;
+      ctx.shadowBlur = Math.round(minEdge * 0.05 * shadowStrength);
+      ctx.shadowOffsetY = Math.round(minEdge * 0.018 * shadowStrength);
+      const radius = Math.round(minEdge * 0.032);
+      const rx = -drawW / 2;
+      const ry = -drawH / 2;
+      ctx.beginPath();
+      ctx.roundRect(rx, ry, drawW, drawH, radius);
+      ctx.clip();
+      ctx.drawImage(drawable, rx, ry, drawW, drawH);
+      // Subtle glossy studio border
+      ctx.strokeStyle = isLightBg ? 'rgba(16, 29, 54, 0.12)' : 'rgba(255, 255, 255, 0.22)';
+      ctx.lineWidth = Math.max(1.5, minEdge * 0.003);
+      ctx.strokeRect(rx, ry, drawW, drawH);
+      ctx.restore();
+    }
   } else {
     // Clean studio placeholder card if scene has no photo selected
-    ctx.fillStyle = scene.lightingEffect === 'clean' ? '#ffffff' : 'rgba(255,255,255,0.08)';
-    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.fillStyle = isLightBg ? '#ffffff' : 'rgba(255,255,255,0.08)';
+    ctx.strokeStyle = isLightBg ? 'rgba(16,29,54,0.18)' : 'rgba(255,255,255,0.24)';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.roundRect(-stageW / 2, -stageH / 2, stageW, stageH, Math.round(width * 0.03));
+    ctx.roundRect(-stageW / 2, -stageH / 2, stageW, stageH, Math.round(minEdge * 0.035));
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = scene.lightingEffect === 'clean' ? '#17233c' : '#ffffff';
-    ctx.font = `700 ${Math.round(width * 0.045)}px "Be Vietnam Pro", sans-serif`;
+    ctx.fillStyle = isLightBg ? '#17233c' : '#ffffff';
+    ctx.font = `700 ${Math.max(16, Math.round(minEdge * 0.044))}px "Be Vietnam Pro", sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(productName || 'AI Product Video', 0, 0);
+    ctx.textBaseline = 'middle';
+    const fallbackLines = wrapTextLines(ctx, productName || 'AI Product Video', stageW * 0.8).slice(0, 2);
+    fallbackLines.forEach((line, idx) => {
+      ctx.fillText(line, 0, (idx - (fallbackLines.length - 1) / 2) * Math.round(minEdge * 0.058));
+    });
   }
   ctx.restore();
 
-  const isLightBg = scene.lightingEffect === 'clean';
-  const padX = Math.round(width * 0.06);
-  const topY = Math.round(height * 0.055);
-
-  // Top product pill is already embedded in a previously approved scene clip.
+  // Top product & transparency pill (only if not already baked in renderedClip)
   if (!scene.renderedClip) {
-  ctx.save();
-  ctx.font = `700 ${Math.max(13, Math.round(width * 0.026))}px "Be Vietnam Pro", sans-serif`;
-  const pillText = productName.slice(0, 34);
-  const pillW = Math.min(width - padX * 2, ctx.measureText(pillText).width + width * 0.06);
-  const pillH = Math.max(28, Math.round(width * 0.058));
-  ctx.fillStyle = isLightBg ? 'rgba(16, 29, 54, 0.88)' : 'rgba(255, 255, 255, 0.14)';
-  ctx.beginPath();
-  ctx.roundRect(padX, topY, pillW, pillH, pillH / 2);
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'left';
-  ctx.fillText(pillText, padX + width * 0.03, topY + pillH / 2);
-
-  // AI simulation transparency badge if non-real media
-  if (scene.sourceType !== 'REAL_PRODUCT') {
-    const badgeLabel = scene.sourceType === 'AI_GENERATED' ? 'Ảnh minh họa AI' : scene.sourceType === 'AI_VIDEO' ? 'Mô phỏng AI' : 'Video thực tế';
-    ctx.font = `600 ${Math.max(11, Math.round(width * 0.021))}px "Be Vietnam Pro", sans-serif`;
-    const bw = ctx.measureText(badgeLabel).width + width * 0.045;
-    ctx.fillStyle = 'rgba(245, 158, 11, 0.9)';
+    ctx.save();
+    const pillFontSize = Math.max(12, Math.round(minEdge * 0.025));
+    ctx.font = `700 ${pillFontSize}px "Be Vietnam Pro", sans-serif`;
+    const pillText = (productName || 'AI Product Studio').slice(0, 34);
+    const pillW = Math.min(width - padX * 2, ctx.measureText(pillText).width + minEdge * 0.055);
+    const pillH = Math.max(26, Math.round(minEdge * 0.052));
+    ctx.fillStyle = isLightBg ? 'rgba(16, 29, 54, 0.88)' : 'rgba(255, 255, 255, 0.14)';
     ctx.beginPath();
-    ctx.roundRect(width - padX - bw, topY, bw, pillH * 0.86, pillH / 2);
+    ctx.roundRect(padX, topY, pillW, pillH, pillH / 2);
     ctx.fill();
-    ctx.fillStyle = '#101d36';
-    ctx.fillText(badgeLabel, width - padX - bw + width * 0.022, topY + (pillH * 0.86) / 2);
-  }
-  ctx.restore();
-  }
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText(pillText, padX + minEdge * 0.028, topY + pillH / 2);
 
-  // Headline / On-screen text & Subtitles at lower third
-  const bottomStart = height * 0.74;
-  ctx.save();
-
-  if (!scene.renderedClip && scene.showOnScreenText !== false && scene.onScreenText) {
-    ctx.font = `800 ${Math.max(18, Math.round(width * 0.042))}px "Be Vietnam Pro", sans-serif`;
-    const lines = wrapTextLines(ctx, scene.onScreenText, width - padX * 2).slice(0, 2);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    let y = bottomStart;
-    for (const line of lines) {
-      ctx.fillStyle = isLightBg ? '#101d36' : '#ffffff';
-      ctx.shadowColor = isLightBg ? 'transparent' : 'rgba(0,0,0,0.45)';
-      ctx.shadowBlur = 10;
-      ctx.fillText(line, width / 2, y);
-      y += Math.round(width * 0.052);
-    }
-  }
-
-  if (!scene.renderedClip && showSubtitles && scene.narration) {
-    const subFontSize = Math.max(13, Math.round(width * 0.027));
-    ctx.font = `500 ${subFontSize}px "Be Vietnam Pro", sans-serif`;
-    const subLines = wrapTextLines(ctx, scene.narration, width - padX * 2.4).slice(0, 2);
-    if (subLines.length > 0) {
-      const boxH = subLines.length * (subFontSize * 1.38) + width * 0.03;
-      const boxY = height * 0.855;
-      ctx.fillStyle = 'rgba(10, 18, 36, 0.76)';
+    if (scene.sourceType !== 'REAL_PRODUCT') {
+      const badgeLabel = scene.sourceType === 'AI_GENERATED' ? 'Ảnh minh họa AI' : scene.sourceType === 'AI_VIDEO' ? 'Mô phỏng AI' : 'Video thực tế';
+      ctx.font = `600 ${Math.max(10, Math.round(minEdge * 0.02))}px "Be Vietnam Pro", sans-serif`;
+      const bw = ctx.measureText(badgeLabel).width + minEdge * 0.04;
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.92)';
       ctx.beginPath();
-      ctx.roundRect(padX, boxY, width - padX * 2, boxH, Math.round(width * 0.02));
+      ctx.roundRect(width - padX - bw, topY, bw, pillH * 0.88, pillH / 2);
       ctx.fill();
-      ctx.fillStyle = '#f8fafc';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      let sy = boxY + width * 0.015;
-      for (const line of subLines) {
-        ctx.fillText(line, width / 2, sy);
-        sy += subFontSize * 1.35;
+      ctx.fillStyle = '#101d36';
+      ctx.fillText(badgeLabel, width - padX - bw + minEdge * 0.02, topY + (pillH * 0.88) / 2);
+    }
+    ctx.restore();
+  }
+
+  // Non-overlapping text, subtitle & CTA overlay zones
+  ctx.save();
+  if (!scene.renderedClip) {
+    if (isLandscape) {
+      // Right-column editorial stack for 16:9
+      const colX = width * 0.56;
+      const colW = width - colX - padX;
+      let cursorY = height * 0.24;
+
+      if (scene.sceneTitle) {
+        ctx.font = `700 ${Math.max(12, Math.round(minEdge * 0.024))}px "Be Vietnam Pro", sans-serif`;
+        ctx.fillStyle = profile.accent;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(scene.sceneTitle.toUpperCase(), colX, cursorY);
+        cursorY += Math.round(minEdge * 0.042);
+      }
+
+      if (hasHeadline) {
+        const headlineSize = Math.max(18, Math.round(minEdge * 0.046));
+        ctx.font = `800 ${headlineSize}px "Be Vietnam Pro", sans-serif`;
+        const lines = wrapTextLines(ctx, scene.onScreenText, colW).slice(0, 3);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        for (const line of lines) {
+          ctx.fillStyle = isLightBg ? '#101d36' : '#ffffff';
+          ctx.shadowColor = isLightBg ? 'transparent' : 'rgba(0,0,0,0.45)';
+          ctx.shadowBlur = 8;
+          ctx.fillText(line, colX, cursorY);
+          cursorY += headlineSize * 1.24;
+        }
+        ctx.shadowBlur = 0;
+        cursorY += Math.round(minEdge * 0.025);
+      }
+
+      if (hasSubtitle) {
+        const subSize = Math.max(13, Math.round(minEdge * 0.026));
+        ctx.font = `500 ${subSize}px "Be Vietnam Pro", sans-serif`;
+        const subLines = wrapTextLines(ctx, scene.narration, colW - minEdge * 0.04).slice(0, 3);
+        if (subLines.length > 0) {
+          const boxH = subLines.length * (subSize * 1.38) + minEdge * 0.032;
+          ctx.fillStyle = 'rgba(10, 18, 36, 0.78)';
+          ctx.beginPath();
+          ctx.roundRect(colX, cursorY, colW, boxH, Math.round(minEdge * 0.02));
+          ctx.fill();
+          ctx.fillStyle = '#f8fafc';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'top';
+          let sy = cursorY + minEdge * 0.016;
+          for (const line of subLines) {
+            ctx.fillText(line, colX + minEdge * 0.02, sy);
+            sy += subSize * 1.38;
+          }
+          cursorY += boxH + Math.round(minEdge * 0.03);
+        }
+      }
+
+      if (hasCta) {
+        const ctaSize = Math.max(13, Math.round(minEdge * 0.027));
+        ctx.font = `700 ${ctaSize}px "Be Vietnam Pro", sans-serif`;
+        const cw = Math.min(colW, ctx.measureText(ctaText).width + minEdge * 0.08);
+        const ch = Math.max(32, Math.round(minEdge * 0.068));
+        const cy = Math.min(height - ch - height * 0.07, cursorY);
+        ctx.fillStyle = '#2563eb';
+        ctx.beginPath();
+        ctx.roundRect(colX, cy, cw, ch, ch / 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ctaText, colX + cw / 2, cy + ch / 2);
+      }
+    } else {
+      // Portrait / Square / 4:5 bottom-aligned stack computed bottom-up to guarantee ZERO collisions
+      let nextBottomY = height - Math.round(height * 0.045);
+
+      if (hasSubtitle) {
+        const subFontSize = Math.max(12, Math.round(minEdge * 0.028));
+        ctx.font = `500 ${subFontSize}px "Be Vietnam Pro", sans-serif`;
+        const subLines = wrapTextLines(ctx, scene.narration, width - padX * 2.5).slice(0, 2);
+        if (subLines.length > 0) {
+          const boxH = subLines.length * (subFontSize * 1.38) + minEdge * 0.028;
+          const boxY = nextBottomY - boxH;
+          ctx.fillStyle = 'rgba(10, 18, 36, 0.78)';
+          ctx.beginPath();
+          ctx.roundRect(padX, boxY, width - padX * 2, boxH, Math.round(minEdge * 0.022));
+          ctx.fill();
+          ctx.fillStyle = '#f8fafc';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          let sy = boxY + minEdge * 0.014;
+          for (const line of subLines) {
+            ctx.fillText(line, width / 2, sy);
+            sy += subFontSize * 1.36;
+          }
+          nextBottomY = boxY - Math.round(height * 0.016);
+        }
+      }
+
+      if (hasHeadline) {
+        const headSize = Math.max(16, Math.round(minEdge * 0.044));
+        ctx.font = `800 ${headSize}px "Be Vietnam Pro", sans-serif`;
+        const lines = wrapTextLines(ctx, scene.onScreenText, width - padX * 2).slice(0, 2);
+        const blockH = lines.length * (headSize * 1.24);
+        let y = nextBottomY - blockH;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        for (const line of lines) {
+          ctx.fillStyle = isLightBg ? '#101d36' : '#ffffff';
+          ctx.shadowColor = isLightBg ? 'transparent' : 'rgba(0,0,0,0.48)';
+          ctx.shadowBlur = 10;
+          ctx.fillText(line, width / 2, y);
+          y += headSize * 1.24;
+        }
+        ctx.shadowBlur = 0;
+        nextBottomY -= blockH + Math.round(height * 0.018);
+      }
+
+      if (hasCta) {
+        const ctaFontSize = Math.max(13, Math.round(minEdge * 0.029));
+        ctx.font = `700 ${ctaFontSize}px "Be Vietnam Pro", sans-serif`;
+        const cw = Math.min(width - padX * 2, ctx.measureText(ctaText).width + minEdge * 0.09);
+        const ch = Math.max(32, Math.round(minEdge * 0.068));
+        const cy = nextBottomY - ch;
+        ctx.fillStyle = '#2563eb';
+        ctx.beginPath();
+        ctx.roundRect((width - cw) / 2, cy, cw, ch, ch / 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ctaText, width / 2, cy + ch / 2);
       }
     }
   }
 
-  // Final scene CTA pill
-  if (sceneIndex === totalScenes - 1 && ctaText && t > 0.35) {
-    const ctaFontSize = Math.max(14, Math.round(width * 0.029));
-    ctx.font = `700 ${ctaFontSize}px "Be Vietnam Pro", sans-serif`;
-    const cw = Math.min(width - padX * 2, ctx.measureText(ctaText).width + width * 0.09);
-    const ch = Math.max(34, Math.round(width * 0.068));
-    const cy = height * 0.65;
-    ctx.fillStyle = '#2864d9';
-    ctx.beginPath();
-    ctx.roundRect((width - cw) / 2, cy, cw, ch, ch / 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(ctaText, width / 2, cy + ch / 2);
-  }
-
   // Bottom timeline progress bar
   const totalBarW = width - padX * 2;
-  const overallProgress = (sceneIndex + t) / Math.max(1, totalScenes);
+  const overallProgress = (sceneIndex + rawT) / Math.max(1, totalScenes);
   ctx.fillStyle = isLightBg ? 'rgba(16,29,54,0.16)' : 'rgba(255,255,255,0.22)';
-  ctx.fillRect(padX, height - Math.round(height * 0.022), totalBarW, 4);
+  ctx.fillRect(padX, height - Math.round(height * 0.02), totalBarW, 4);
   ctx.fillStyle = '#3672e8';
-  ctx.fillRect(padX, height - Math.round(height * 0.022), totalBarW * overallProgress, 4);
+  ctx.fillRect(padX, height - Math.round(height * 0.02), totalBarW * overallProgress, 4);
 
   ctx.restore();
 }
@@ -368,8 +819,10 @@ async function synthesizeMusicTrack(
   sampleRate = 44100,
   voiceovers: VoiceoverTrack[] = []
 ): Promise<AudioBuffer> {
-  const frameCount = Math.ceil(totalDurationSec * sampleRate);
+  const frameCount = Math.max(1, Math.ceil(totalDurationSec * sampleRate));
   const offline = new OfflineAudioContext(2, frameCount, sampleRate);
+  const activeVoiceWindows: Array<{ start: number; end: number }> = [];
+
   for (const clip of voiceovers) {
     if (!clip.audioBuffer || clip.startSec >= totalDurationSec) continue;
     const rate = Math.min(1.5, Math.max(0.7, clip.playbackRate ?? 1));
@@ -394,10 +847,18 @@ async function synthesizeMusicTrack(
     gain.connect(offline.destination);
     source.start(startAt);
     source.stop(startAt + playDur);
+    activeVoiceWindows.push({ start: startAt, end: startAt + playDur });
   }
+
   if (!music.enabled || music.volume <= 0) return offline.startRendering();
+  const baseMusicVol = Math.min(0.45, Math.max(0.05, music.volume));
   const master = offline.createGain();
-  master.gain.setValueAtTime(Math.min(0.45, Math.max(0.05, music.volume)), 0);
+  master.gain.setValueAtTime(baseMusicVol, 0);
+  // Subtle audio ducking when AI voiceover is speaking
+  for (const w of activeVoiceWindows) {
+    master.gain.setTargetAtTime(baseMusicVol * 0.42, w.start, 0.08);
+    master.gain.setTargetAtTime(baseMusicVol, w.end, 0.14);
+  }
   master.connect(offline.destination);
 
   const chordsByMood: Record<string, number[][]> = {
@@ -456,12 +917,13 @@ export async function renderProjectVideo(options: {
   resolution: RenderResolution;
   productName: string;
   ctaText: string;
+  industry?: string;
   musicConfig: MusicConfig;
   voiceovers?: VoiceoverTrack[];
   signal?: AbortSignal;
   onProgress: (percent: number, stageText: string) => void;
 }): Promise<RenderResult> {
-  const { scenes, aspectRatio, resolution, productName, ctaText, musicConfig, voiceovers = [], signal, onProgress } = options;
+  const { scenes, aspectRatio, resolution, productName, ctaText, industry, musicConfig, voiceovers = [], signal, onProgress } = options;
   if (scenes.length === 0) {
     throw new Error('Cần ít nhất 1 phân cảnh để dựng video.');
   }
@@ -473,7 +935,7 @@ export async function renderProjectVideo(options: {
   onProgress(5, 'Đang tải hình ảnh sản phẩm...');
   const loadedImages = await Promise.all(scenes.map(s => s.aiVideoUrl ? loadVideoElement(s.aiVideoUrl) : loadImageElement(s.imageUrl)));
   if (scenes.some((scene, index) => scene.aiVideoUrl && !loadedImages[index])) {
-    throw new Error('Không tải được một clip AI của dự án. Hãy kiểm tra lại liên kết video hoặc tạo lại phân cảnh.');
+    throw new Error('Không tải được một clip video của dự án. Hãy kiểm tra lại liên kết video hoặc tạo lại phân cảnh.');
   }
   const missingImageIndex = scenes.findIndex((scene, index) => Boolean(scene.imageUrl) && !scene.aiVideoUrl && !loadedImages[index]);
   if (missingImageIndex >= 0) {
@@ -482,13 +944,31 @@ export async function renderProjectVideo(options: {
 
   if (signal?.aborted) throw new Error('RENDER_CANCELLED');
 
+  // Pre-warm browser background cutout canvases for studio cutout scenes before rendering loop
+  const cutoutCache = new Map<string, CutoutResult>();
+  const cutoutCount = scenes.filter((s, idx) => s.stageConfig?.bgMode === 'cutout-studio' && loadedImages[idx] instanceof HTMLImageElement).length;
+  if (cutoutCount > 0) {
+    onProgress(9, 'Đang tách nền & dựng sân khấu studio 2.5D cho sản phẩm...');
+    for (let i = 0; i < scenes.length; i++) {
+      const s = scenes[i];
+      const media = loadedImages[i];
+      if (s.stageConfig?.bgMode === 'cutout-studio' && media instanceof HTMLImageElement) {
+        const sourceKey = s.imageId || s.imageUrl || `scene-${i}`;
+        const sens = s.stageConfig?.cutoutSensitivity ?? 28;
+        const cacheKey = `${sourceKey}|s=${sens}`;
+        if (!cutoutCache.has(cacheKey)) {
+          cutoutCache.set(cacheKey, getProductCutout(media, sourceKey, { sensitivity: sens }));
+        }
+      }
+    }
+  }
+
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Trình duyệt không hỗ trợ Canvas 2D.');
 
-  // AI video clips use real-time MediaRecorder rendering to preserve motion.
   const hasAiVideoScenes = scenes.some(scene => Boolean(scene.aiVideoUrl));
   const webCodecsOk = !hasAiVideoScenes && typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
 
@@ -585,7 +1065,7 @@ export async function renderProjectVideo(options: {
 
         const ch0 = audioBuffer.getChannelData(0);
         const ch1 = audioBuffer.getChannelData(1);
-        const chunkFrames = 4410; // 100ms chunks
+        const chunkFrames = 4410;
         for (let offset = 0; offset < audioBuffer.length; offset += chunkFrames) {
           if (encoderError) throw encoderError;
           if (signal?.aborted) throw new Error('RENDER_CANCELLED');
@@ -635,6 +1115,8 @@ export async function renderProjectVideo(options: {
           totalScenes: scenes.length,
           productName: currentScene.productName || productName,
           ctaText,
+          industry,
+          cutoutCache,
         });
 
         while (videoEncoder.encodeQueueSize > 8 && !encoderError && !signal?.aborted) {
@@ -682,12 +1164,25 @@ export async function renderProjectVideo(options: {
     }
   }
 
-  // Fallback to MediaRecorder when WebCodecs H.264 is unavailable
+  // Fallback to MediaRecorder when WebCodecs H.264 is unavailable or external video clips exist
   if (typeof MediaRecorder === 'undefined') {
     throw new Error('Trình duyệt hiện tại không hỗ trợ WebCodecs hoặc MediaRecorder để xuất video.');
   }
 
   onProgress(20, 'Đang chuyển sang chế độ ghi hình MediaRecorder...');
+  // Render initial frame cleanly before captureStream starts so frame 0 is never blank
+  drawSceneFrame(ctx, width, height, {
+    scene: scenes[0],
+    image: loadedImages[0],
+    sceneProgress: 0,
+    sceneIndex: 0,
+    totalScenes: scenes.length,
+    productName: scenes[0].productName || productName,
+    ctaText,
+    industry,
+    cutoutCache,
+  });
+
   const stream = canvas.captureStream(fps);
   let audioContext: AudioContext | null = null;
   try {
@@ -762,7 +1257,7 @@ export async function renderProjectVideo(options: {
           const sceneElapsed = Math.max(0, elapsed - acc);
           if (Number.isFinite(activeMedia.duration) && activeMedia.duration > 0 && activeMedia.readyState >= 2) {
             const targetTime = sceneElapsed % activeMedia.duration;
-            if (Math.abs(activeMedia.currentTime - targetTime) > 0.4) activeMedia.currentTime = targetTime;
+            if (Math.abs(activeMedia.currentTime - targetTime) > 0.35) activeMedia.currentTime = targetTime;
           }
           if (activeMedia.paused) activeMedia.play().catch(() => {});
         }
@@ -775,6 +1270,8 @@ export async function renderProjectVideo(options: {
           totalScenes: scenes.length,
           productName: scenes[idx].productName || productName,
           ctaText,
+          industry,
+          cutoutCache,
         });
         onProgress(Math.min(95, 20 + Math.round((elapsed / totalDurationSec) * 75)), 'Đang ghi video...');
         requestAnimationFrame(tick);

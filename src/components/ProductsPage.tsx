@@ -29,6 +29,7 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [analysisNote, setAnalysisNote] = useState('');
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'product' | 'image'; product: Product; imageId?: string } | null>(null);
 
   // Form state
@@ -225,10 +226,16 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
     setAnalyzing(true);
     setError('');
     setMessage('');
+    setAnalysisNote('');
     try {
-      await api('/api/ai/analyze-product', 'POST', { productId: product.id });
+      const res = await api<{ analysis: Product['aiAnalysis']; fallbackReason?: string }>('/api/ai/analyze-product', 'POST', { productId: product.id });
       await loadProducts(product.id);
-      setMessage('Đã hoàn tất phân tích sản phẩm.');
+      if (res.analysis?.mode === 'gemini') {
+        setMessage(`Đã hoàn tất phân tích sản phẩm bằng Gemini (${res.analysis.model}).`);
+      } else {
+        setAnalysisNote(res.fallbackReason || 'Chưa kết nối được Gemini API; đã tạo bản phân tích cấu trúc miễn phí dựa trên dữ liệu thực tế.');
+        setMessage('Đã tạo phân tích cấu trúc miễn phí (chế độ dự phòng).');
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Không thể phân tích sản phẩm.');
     } finally {
@@ -487,6 +494,12 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
                   </button>
                 </div>
 
+                {analysisNote && (
+                  <div className="warning-strip" style={{ marginBottom: 12 }}>
+                    <span>{analysisNote}</span>
+                  </div>
+                )}
+
                 {selected.aiAnalysis ? (
                   <div className="analysis-result">
                     <div className="analysis-mode-bar">
@@ -521,6 +534,11 @@ export default function ProductsPage({ industries, quota, onStartVideo }: Props)
                         <p>
                           <b>Định dạng video khuyên dùng:</b> {selected.aiAnalysis.aiSuggestions.recommendedVideoTypes.join(', ')}
                         </p>
+                        {selected.aiAnalysis.aiSuggestions.sceneRoles && selected.aiAnalysis.aiSuggestions.sceneRoles.length > 0 && (
+                          <p>
+                            <b>Vai trò phân cảnh đề xuất:</b> {selected.aiAnalysis.aiSuggestions.sceneRoles.join(' → ')}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
