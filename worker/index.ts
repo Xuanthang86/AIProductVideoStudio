@@ -460,30 +460,44 @@ function buildStructuredFreeScripts(input: {
       let sceneTitle = '';
       let sceneRole: 'intro' | 'usp' | 'detail' | 'cta' = 'usp';
       if (i === 0) {
-        sceneTitle = isEn ? 'Opening Hook' : 'Mở đầu thu hút';
+        sceneTitle = isEn
+          ? (variantIdx === 0 ? 'Opening Hook' : 'Story Intro')
+          : (variantIdx === 0 ? 'Mở đầu trực diện' : 'Câu hỏi mở đầu');
         sceneRole = 'intro';
         narration = isEn
-          ? `Meet ${input.productName}${input.brand ? ` by ${input.brand}` : ''} — built for ${input.industry}.`
+          ? variantIdx === 0
+            ? `Meet ${input.productName}${input.brand ? ` by ${input.brand}` : ''} — built for ${input.industry}.`
+            : `Looking for a smarter choice in ${input.industry}? Discover ${input.productName}.`
           : variantIdx === 0
             ? `Giới thiệu ${input.productName}${input.brand ? ` từ ${input.brand}` : ''} — lựa chọn nổi bật trong ngành ${input.industry}.`
-            : `Bạn đang tìm kiếm ${input.productName}? Hãy cùng xem điểm ấn tượng ngay sau đây.`;
-        onScreenText = input.productName;
+            : `Bạn đang tìm kiếm ${input.productName} phù hợp cho ${input.targetAudience || 'nhu cầu hằng ngày'}? Xem ngay điểm khác biệt.`;
+        onScreenText = variantIdx === 0 ? input.productName : `${input.productName} · Điểm khác biệt`;
       } else if (i === count - 1) {
-        sceneTitle = isEn ? 'Closing & CTA' : 'Kết & Kêu gọi hành động';
+        sceneTitle = isEn
+          ? (variantIdx === 0 ? 'Closing & Direct CTA' : 'Experience & CTA')
+          : (variantIdx === 0 ? 'Chốt đơn trực tiếp' : 'Mời khám phá chi tiết');
         sceneRole = 'cta';
         narration = isEn
-          ? `Discover ${input.productName} today. Tap to learn more.`
-          : `Trải nghiệm ${input.productName} ngay hôm nay. Xem chi tiết sản phẩm!`;
-        onScreenText = variantIdx === 0 ? 'Khám phá ngay' : 'Xem chi tiết sản phẩm';
+          ? variantIdx === 0
+            ? `Order ${input.productName} today with confidence.`
+            : `See full details of ${input.productName} and choose your style.`
+          : variantIdx === 0
+            ? `Sở hữu ${input.productName} ngay hôm nay — sẵn sàng đồng hành cùng bạn!`
+            : `Khám phá chi tiết ${input.productName} để chọn phiên bản phù hợp nhất ngay hôm nay.`;
+        onScreenText = variantIdx === 0 ? 'Khám phá & Đặt ngay' : 'Xem chi tiết sản phẩm';
       } else {
-        sceneTitle = isEn ? `Highlight ${i}` : `Điểm nhấn ${i}`;
-        sceneRole = i % 2 === 1 ? 'usp' : 'detail';
+        sceneTitle = isEn
+          ? (variantIdx === 0 ? `Key Feature ${i}` : `Real Experience ${i}`)
+          : (variantIdx === 0 ? `Điểm nhấn chính ${i}` : `Trải nghiệm thực tế ${i}`);
+        sceneRole = variantIdx === 0 ? (i % 2 === 1 ? 'usp' : 'detail') : (i % 2 === 1 ? 'detail' : 'usp');
         narration = isEn
-          ? `Highlight ${i}: ${point}.`
+          ? variantIdx === 0
+            ? `Highlight ${i}: ${point}.`
+            : `In everyday use: ${point}.`
           : variantIdx === 0
             ? `Điểm nổi bật: ${point}.`
-            : `Thiết kế và trải nghiệm thực tế: ${point}.`;
-        onScreenText = point.slice(0, 64);
+            : `Trải nghiệm thực tế mang lại: ${point}.`;
+        onScreenText = variantIdx === 0 ? point.slice(0, 56) : `Lợi ích ${i}: ${point}`.slice(0, 64);
       }
 
       return {
@@ -493,11 +507,11 @@ function buildStructuredFreeScripts(input: {
         sceneRole,
         narration,
         onScreenText,
-        motionType: motions[(i + variantIdx) % motions.length],
+        motionType: motions[(i + variantIdx * 2) % motions.length],
         transitionType: transitions[(i + variantIdx) % transitions.length],
-        lightingEffect: lights[(i + variantIdx) % lights.length],
-        visualPrompt: `Cảnh ${i + 1}: ${input.videoType} cho ${input.productName} (${input.style})`,
-        musicMood: input.videoType === 'Luxury Commercial' ? 'elegant-ambient' : 'upbeat-modern',
+        lightingEffect: lights[(i + variantIdx * 2) % lights.length],
+        visualPrompt: `Cảnh ${i + 1} (${variantIdx === 0 ? 'trực diện' : 'kể chuyện'}): ${input.videoType} cho ${input.productName} (${input.style})`,
+        musicMood: variantIdx === 0 ? (input.videoType === 'Luxury Commercial' ? 'elegant-ambient' : 'upbeat-modern') : 'warm-acoustic',
       };
     });
 
@@ -558,6 +572,10 @@ function stripJsonFences(text: string): string {
 const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
 const FALLBACK_GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const SECONDARY_FALLBACK_GEMINI_MODEL = 'gemini-2.5-flash';
+
+function getGeminiApiKey(env: Env): string {
+  return String(env.GEMINI_API_KEY || '').trim();
+}
 
 function normalizeGeminiModel(raw?: string | null): string {
   const cleaned = String(raw || '').replace(/^models\//, '').trim();
@@ -742,6 +760,7 @@ async function generateScriptsWithGeminiApi(input: {
   const sceneCount = input.durationSec <= 12 ? 2 : input.durationSec <= 20 ? 3 : input.durationSec <= 35 ? 4 : input.durationSec <= 50 ? 5 : 6;
   const prompt = [
     `Tạo 2 phương án kịch bản video sản phẩm bằng ${input.language === 'en' ? 'Tiếng Anh' : 'Tiếng Việt'}, tổng thời lượng mỗi phương án đúng ${input.durationSec} giây, mỗi phương án gồm khoảng ${sceneCount} phân cảnh.`,
+    'QUAN TRỌNG: 2 phương án PHẢI KHÁC BIỆT RÕ RỆT về góc tiếp cận, lời thoại, chữ trên màn hình và nhịp chuyển động (Phương án 1: giới thiệu trực diện sản phẩm & điểm mạnh; Phương án 2: gợi mở nhu cầu/vấn đề của khách hàng và trải nghiệm thực tế). Tuyệt đối không lặp lại nguyên văn các phân cảnh giữa 2 phương án.',
     `Loại video: ${input.videoType}`, `Ngành hàng: ${input.industry}`, `Tên sản phẩm: ${input.productName}`,
     `Thương hiệu: ${input.brand || 'Chưa cung cấp'}`, `Mô tả sản phẩm: ${input.description || 'Chưa cung cấp'}`,
     `Điểm nổi bật do người dùng cung cấp: ${input.highlights.join('; ') || 'Chưa cung cấp'}`,
@@ -1647,9 +1666,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           m.module_key === 'browser_renderer'
             ? true
             : m.module_key.startsWith('gemini')
-              ? Boolean(env.GEMINI_API_KEY)
+              ? Boolean(getGeminiApiKey(env))
               : m.module_key === 'kokoro_tts'
-                ? Boolean(env.GEMINI_API_KEY)
+                ? Boolean(getGeminiApiKey(env))
                 : m.module_key === 'wan_video'
                   ? false
                   : m.module_key === 'comfyui_image'
@@ -1658,7 +1677,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       }));
       return json({
         modules,
-        geminiConfigured: Boolean(env.GEMINI_API_KEY),
+        geminiConfigured: Boolean(getGeminiApiKey(env)),
         storage: {
           provider: env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT ? 'imagekit' : 'd1-inline',
           imagekitConfigured: Boolean(env.IMAGEKIT_PRIVATE_KEY && env.IMAGEKIT_URL_ENDPOINT),
@@ -1727,26 +1746,29 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         modelName: configuredAnalysisModel,
       };
 
+      const geminiApiKey = getGeminiApiKey(env);
       let analysis: unknown;
       let fallbackReason = '';
       if (!modCfg?.is_enabled) {
         fallbackReason = 'Mô-đun Gemini Phân tích sản phẩm đang được tắt trong Quản trị AI.';
       } else if (modCfg.is_paid) {
         fallbackReason = 'Mô-đun Gemini Phân tích sản phẩm đang gắn cờ trả phí.';
-      } else if (!env.GEMINI_API_KEY) {
+      } else if (!geminiApiKey) {
         fallbackReason = 'Máy chủ chưa được cấu hình GEMINI_API_KEY (Cloudflare Worker Secret / biến môi trường).';
       } else if (!(await aiModuleWithinLimits(env, modCfg))) {
         fallbackReason = 'Mô-đun Gemini Phân tích sản phẩm đã đạt giới hạn sử dụng.';
       }
 
-      if (!fallbackReason && env.GEMINI_API_KEY) {
+      if (!fallbackReason && geminiApiKey) {
         try {
-          analysis = env.AI_CALLER?.analyzeProduct
+          const analysisResult = env.AI_CALLER?.analyzeProduct
             ? await env.AI_CALLER.analyzeProduct(inputPayload)
-            : await analyzeProductWithGeminiApi(inputPayload, env.GEMINI_API_KEY, configuredAnalysisModel);
-          await logAiUsage(env, actor.id, 'gemini_analysis', 'google-genai', configuredAnalysisModel, 'analyze-product', 'SUCCESS', 650, 0);
-          await env.DB.prepare("UPDATE ai_configs SET model_name=?,last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_analysis'")
-            .bind(configuredAnalysisModel, new Date().toISOString())
+            : await analyzeProductWithGeminiApi(inputPayload, geminiApiKey, configuredAnalysisModel);
+          analysis = analysisResult;
+          const usedModel = String((analysisResult as { model?: string })?.model || configuredAnalysisModel);
+          await logAiUsage(env, actor.id, 'gemini_analysis', 'google-genai', usedModel, 'analyze-product', 'SUCCESS', 650, 0);
+          await env.DB.prepare("UPDATE ai_configs SET last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_analysis'")
+            .bind(new Date().toISOString())
             .run();
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Gemini API error';
@@ -1820,6 +1842,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         imageCount,
       };
 
+      const geminiApiKey = getGeminiApiKey(env);
       let result: unknown;
       let useGemini = false;
       let fallbackReason = '';
@@ -1829,7 +1852,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         fallbackReason = 'Mô-đun Gemini Viết kịch bản đang tắt trong phần Quản trị AI.';
       } else if (modCfg.is_paid) {
         fallbackReason = 'Mô-đun Gemini Viết kịch bản đang gắn cờ trả phí; hệ thống sử dụng kịch bản cấu trúc miễn phí.';
-      } else if (!env.GEMINI_API_KEY) {
+      } else if (!geminiApiKey) {
         fallbackReason = 'Máy chủ chưa được cấu hình GEMINI_API_KEY (Cloudflare Worker Secret / biến môi trường).';
       } else {
         try {
@@ -1841,12 +1864,12 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         }
       }
 
-      if (useGemini && env.GEMINI_API_KEY) {
+      if (useGemini && geminiApiKey) {
         const modelName = normalizeGeminiModel(modCfg?.model_name);
         try {
           const generated = env.AI_CALLER?.generateScripts
             ? await env.AI_CALLER.generateScripts({ ...inputPayload, modelName })
-            : await generateScriptsWithGeminiApi(inputPayload, env.GEMINI_API_KEY, modelName);
+            : await generateScriptsWithGeminiApi(inputPayload, geminiApiKey, modelName);
           const generatedVariants = generated && typeof generated === 'object'
             ? (generated as { variants?: Array<{ scenes?: unknown[] }> }).variants
             : undefined;
@@ -1855,10 +1878,11 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             throw new Error('Gemini không trả về phương án kịch bản có phân cảnh hợp lệ.');
           }
           result = generated;
-          await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', modelName, 'generate-script', 'SUCCESS', 900, 0)
+          const usedModel = String((generated as { model?: string })?.model || modelName);
+          await logAiUsage(env, actor.id, 'gemini_script', 'google-gemini', usedModel, 'generate-script', 'SUCCESS', 900, 0)
             .catch(logError => console.warn('Could not record successful Gemini usage:', logError));
-          await env.DB.prepare("UPDATE ai_configs SET model_name=?,last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
-            .bind(modelName, new Date().toISOString()).run().catch(configError => console.warn('Could not update Gemini script status:', configError));
+          await env.DB.prepare("UPDATE ai_configs SET last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
+            .bind(new Date().toISOString()).run().catch(configError => console.warn('Could not update Gemini script status:', configError));
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Gemini script error';
           fallbackReason = formatGeminiFallbackReason(msg);
@@ -2005,13 +2029,52 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           nextStage.backdropStyle = 'tech-grid';
           changes.push('Chuyển không gian công nghệ Neon Rim');
         }
-        if (/(tách nền|bối cảnh|studio|đổi nền|thay nền)/i.test(lower)) {
+        if (/(nền trắng|phông trắng|nền màu trắng)/i.test(lower)) {
+          nextStage.bgMode = 'cutout-studio';
+          nextStage.backdropStyle = 'solid-color';
+          nextStage.customBgColor = '#ffffff';
+          lightingEffect = 'clean';
+          changes.push('Tách nền & đổi phông đơn sắc trắng (#ffffff)');
+        } else if (/(nền đen|phông đen|nền tối)/i.test(lower)) {
+          nextStage.bgMode = 'cutout-studio';
+          nextStage.backdropStyle = 'solid-color';
+          nextStage.customBgColor = '#0f172a';
+          changes.push('Tách nền & đổi phông đơn sắc tối (#0f172a)');
+        } else if (/(nền xanh|phông xanh)/i.test(lower)) {
+          nextStage.bgMode = 'cutout-studio';
+          nextStage.backdropStyle = 'solid-color';
+          nextStage.customBgColor = '#e0f2fe';
+          changes.push('Tách nền & đổi phông xanh dịu (#e0f2fe)');
+        } else if (/(tách nền|bối cảnh|studio|đổi nền|thay nền)/i.test(lower)) {
           nextStage.bgMode = 'cutout-studio';
           if (!nextStage.backdropStyle) nextStage.backdropStyle = 'auto-industry';
           changes.push('Bật tách nền sản phẩm & đặt trên sân khấu Studio 2.5D');
         } else if (/(ảnh gốc|giữ nền)/i.test(lower)) {
           nextStage.bgMode = 'original';
           changes.push('Khôi phục hiển thị ảnh gốc');
+        }
+        const curTextCfg = nextStage.textConfig && typeof nextStage.textConfig === 'object' ? { ...(nextStage.textConfig as Record<string, unknown>) } : {};
+        if (/(chữ ở trên|chữ trên|vị trí trên)/i.test(lower)) {
+          curTextCfg.position = 'top';
+          nextStage.textConfig = curTextCfg;
+          changes.push('Đưa vị trí chữ lên phía trên');
+        } else if (/(chữ ở giữa|chữ giữa|vị trí giữa)/i.test(lower)) {
+          curTextCfg.position = 'center';
+          nextStage.textConfig = curTextCfg;
+          changes.push('Đưa vị trí chữ vào giữa khung hình');
+        } else if (/(chữ ở dưới|chữ dưới|vị trí dưới)/i.test(lower)) {
+          curTextCfg.position = 'bottom';
+          nextStage.textConfig = curTextCfg;
+          changes.push('Đưa vị trí chữ xuống phía dưới');
+        }
+        if (/(chữ lớn|chữ to|tăng cỡ chữ)/i.test(lower)) {
+          curTextCfg.size = 'lg';
+          nextStage.textConfig = curTextCfg;
+          changes.push('Tăng cỡ chữ hiển thị (Lớn)');
+        } else if (/(chữ nhỏ|giảm cỡ chữ)/i.test(lower)) {
+          curTextCfg.size = 'sm';
+          nextStage.textConfig = curTextCfg;
+          changes.push('Thu gọn cỡ chữ hiển thị (Nhỏ)');
         }
         if (/(ngắn gọn|súc tích|rút ngắn)/i.test(lower) && narration.length > 60) {
           narration = narration.split(/[.!?]/)[0].trim() + '.';
@@ -2036,7 +2099,8 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       if (!config?.is_enabled) return fail('Mô-đun Gemini viết kịch bản đang được quản trị viên tắt.', 503);
       if (config.is_paid) return fail('Mô-đun Gemini hiện được cấu hình là dịch vụ trả phí. Đã chặn để tránh phát sinh chi phí.', 403);
 
-      if (!env.GEMINI_API_KEY) {
+      const geminiApiKey = getGeminiApiKey(env);
+      if (!geminiApiKey) {
         if (instruction.trim()) {
           const fallbackApplied = applyRuleBasedInstruction(instruction);
           if (fallbackApplied.hasMatchedCommand) {
@@ -2091,7 +2155,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         })}.`,
         instruction ? `Yêu cầu chỉnh sửa của người dùng: ${instruction}` : 'Hãy phân tích ảnh và đề xuất lời thoại, chữ ngắn trên màn hình, bố cục sân khấu và hiệu ứng phù hợp với ảnh.',
         `Ngôn ngữ đầu ra: ${str(data.language) === 'en' ? 'English' : 'Tiếng Việt'}.`,
-        'Trả về JSON hợp lệ gồm: narration, onScreenText, showOnScreenText (boolean), visualPrompt, motionType, transitionType, lightingEffect, sceneTitle, changeSummary, và object stageConfig (bgMode: "original"|"cutout-studio", backdropStyle: "auto-industry"|"luxury-pedestal"|"minimal-studio"|"tech-grid"|"warm-lifestyle"|"botanical-fresh", productScale: 0.65..1.35, shadowIntensity: 0..1, lightingPreset: "soft-studio"|"golden-hour"|"editorial-contrast"|"cool-tech", motionSpeed: 0.5..1.5).',
+        'Trả về JSON hợp lệ gồm: narration, onScreenText, showOnScreenText (boolean), visualPrompt, motionType, transitionType, lightingEffect, sceneTitle, changeSummary, và object stageConfig (bgMode: "original"|"cutout-studio", backdropStyle: "auto-industry"|"luxury-pedestal"|"minimal-studio"|"tech-grid"|"warm-lifestyle"|"botanical-fresh"|"solid-color", customBgColor: "#RRGGBB", productScale: 0.65..1.35, shadowIntensity: 0..1, lightingPreset: "soft-studio"|"golden-hour"|"editorial-contrast"|"cool-tech", motionSpeed: 0.5..1.5, textConfig: { size: "sm"|"md"|"lg", color: "#RRGGBB", position: "top"|"center"|"bottom" }).',
         'motionType chỉ được là zoom-in, zoom-out, pan-left, pan-right, parallax, rotate-showcase.',
         'transitionType chỉ được là fade, slide, zoom-cut.',
         'lightingEffect chỉ được là studio-glow, warm-gold, neon-rim, clean.',
@@ -2099,7 +2163,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       ].join('\n');
 
       try {
-        const { payload, model } = await callGeminiGenerateContent(env.GEMINI_API_KEY, config.model_name, {
+        const { payload, model } = await callGeminiGenerateContent(geminiApiKey, config.model_name, {
           contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: imageBase64 } }, { text: prompt }] }],
           generationConfig: { responseMimeType: 'application/json' },
         });
@@ -2109,13 +2173,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         const motions = ['zoom-in','zoom-out','pan-left','pan-right','parallax','rotate-showcase'];
         const transitions = ['fade','slide','zoom-cut'];
         const lights = ['studio-glow','warm-gold','neon-rim','clean'];
-        const backdrops = ['auto-industry','luxury-pedestal','minimal-studio','tech-grid','warm-lifestyle','botanical-fresh'];
+        const backdrops = ['auto-industry','luxury-pedestal','minimal-studio','tech-grid','warm-lifestyle','botanical-fresh','solid-color'];
         const lightingPresets = ['soft-studio','golden-hour','editorial-contrast','cool-tech'];
         const rawStage = parsed.stageConfig && typeof parsed.stageConfig === 'object' ? parsed.stageConfig as Record<string, unknown> : {};
+        const rawTextCfg = rawStage.textConfig && typeof rawStage.textConfig === 'object' ? rawStage.textConfig as Record<string, unknown> : null;
+        const prevTextCfg = currentStage.textConfig && typeof currentStage.textConfig === 'object' ? currentStage.textConfig as Record<string, unknown> : {};
+        const validHex = (val: unknown) => /^#[0-9a-fA-F]{6}$/.test(str(val)) ? str(val).toLowerCase() : '';
         const nextStageConfig = {
           ...currentStage,
           ...(rawStage.bgMode === 'cutout-studio' || rawStage.bgMode === 'original' ? { bgMode: rawStage.bgMode } : {}),
           ...(backdrops.includes(str(rawStage.backdropStyle)) ? { backdropStyle: str(rawStage.backdropStyle) } : {}),
+          ...(validHex(rawStage.customBgColor) ? { customBgColor: validHex(rawStage.customBgColor) } : {}),
           ...(lightingPresets.includes(str(rawStage.lightingPreset)) ? { lightingPreset: str(rawStage.lightingPreset) } : {}),
           ...(typeof rawStage.productScale === 'number' && Number.isFinite(rawStage.productScale)
             ? { productScale: Math.min(1.35, Math.max(0.65, Number(rawStage.productScale.toFixed(2)))) }
@@ -2125,6 +2193,16 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
             : {}),
           ...(typeof rawStage.motionSpeed === 'number' && Number.isFinite(rawStage.motionSpeed)
             ? { motionSpeed: Math.min(1.5, Math.max(0.5, Number(rawStage.motionSpeed.toFixed(2)))) }
+            : {}),
+          ...(rawTextCfg
+            ? {
+                textConfig: {
+                  ...prevTextCfg,
+                  ...(rawTextCfg.size === 'sm' || rawTextCfg.size === 'md' || rawTextCfg.size === 'lg' ? { size: rawTextCfg.size } : {}),
+                  ...(validHex(rawTextCfg.color) ? { color: validHex(rawTextCfg.color) } : {}),
+                  ...(rawTextCfg.position === 'top' || rawTextCfg.position === 'center' || rawTextCfg.position === 'bottom' ? { position: rawTextCfg.position } : {}),
+                },
+              }
             : {}),
         };
         const resultScene = {
@@ -2139,8 +2217,8 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           stageConfig: nextStageConfig,
         };
         await logAiUsage(env, actor.id, 'gemini_script', 'google-genai', model, 'scene-assist', 'SUCCESS', imageBase64.length, 0);
-        await env.DB.prepare("UPDATE ai_configs SET model_name=?,last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
-          .bind(model, new Date().toISOString()).run();
+        await env.DB.prepare("UPDATE ai_configs SET last_status='READY',last_error=NULL,updated_at=? WHERE module_key='gemini_script'")
+          .bind(new Date().toISOString()).run();
         return json({
           scene: resultScene,
           mode: 'gemini',
@@ -2188,7 +2266,8 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', modCfg.model_name, 'tts', 'LIMIT_REACHED', 0, 0, 'AI module quota reached');
         return json({ available: false, reason: 'Mô-đun AI Voice đã đạt hạn mức sử dụng ngày/tháng do quản trị viên thiết lập.', fallback: 'browser-speech-or-silent' });
       }
-      if (!env.GEMINI_API_KEY) {
+      const geminiTtsKey = getGeminiApiKey(env);
+      if (!geminiTtsKey) {
         await logAiUsage(env, actor.id, 'kokoro_tts', 'google-gemini', 'gemini-3.8-flash-lite-tts', 'tts', 'UNAVAILABLE', 0, 0, 'GEMINI_API_KEY not configured');
         return json({ available: false, reason: 'Chưa cấu hình khóa Gemini API (GEMINI_API_KEY) cho chức năng tạo giọng đọc.', fallback: 'browser-speech-or-silent' });
       }
@@ -2209,7 +2288,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         // Primary: standard generateContent audio endpoint per Gemini 3.8 TTS SDK spec
         const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${ttsModel}:generateContent`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': geminiTtsKey },
           body: JSON.stringify({
             contents: [{
               role: 'user',

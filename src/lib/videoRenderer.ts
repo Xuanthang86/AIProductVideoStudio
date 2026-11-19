@@ -171,6 +171,22 @@ interface IndustryVisualProfile {
   pedestalTop: string;
   pedestalSide: string;
   lightMode: boolean;
+  solidHex?: string;
+}
+
+function normalizeHexColor(raw: unknown, fallback = '#ffffff'): string {
+  const str = typeof raw === 'string' ? raw.trim() : '';
+  return /^#[0-9a-fA-F]{6}$/.test(str) ? str.toLowerCase() : fallback;
+}
+
+function isLightHexColor(hex: string): boolean {
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return false;
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.62;
 }
 
 function resolveIndustryProfile(industry: string | undefined, lightingEffect: VideoScene['lightingEffect'], stage?: SceneStageConfig): IndustryVisualProfile {
@@ -278,6 +294,20 @@ function resolveIndustryProfile(industry: string | undefined, lightingEffect: Vi
     base.lightMode = false;
   }
 
+  if (backdrop === 'solid-color') {
+    const solidHex = normalizeHexColor(stage?.customBgColor, '#ffffff');
+    const lightSolid = isLightHexColor(solidHex);
+    base.solidHex = solidHex;
+    base.bgTop = solidHex;
+    base.bgMid = solidHex;
+    base.bgBottom = solidHex;
+    base.lightMode = lightSolid;
+    base.accent = lightSolid ? '#2563eb' : '#60a5fa';
+    base.glow = lightSolid ? 'rgba(37, 99, 235, 0.08)' : 'rgba(96, 165, 250, 0.16)';
+    base.pedestalTop = lightSolid ? 'rgba(255, 255, 255, 0.94)' : 'rgba(255, 255, 255, 0.24)';
+    base.pedestalSide = lightSolid ? 'rgba(186, 200, 224, 0.85)' : 'rgba(13, 26, 51, 0.72)';
+  }
+
   return base;
 }
 
@@ -293,26 +323,33 @@ function drawStudioBackdrop(
   stageRadius: number,
   drawPedestal: boolean
 ) {
-  // Base studio cyclorama gradient
-  const bg = ctx.createLinearGradient(0, 0, w, h);
-  bg.addColorStop(0, profile.bgTop);
-  bg.addColorStop(0.55, profile.bgMid);
-  bg.addColorStop(1, profile.bgBottom);
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, w, h);
+  if (profile.defaultBackdrop === 'solid-color' && profile.solidHex) {
+    ctx.fillStyle = profile.solidHex;
+    ctx.fillRect(0, 0, w, h);
+  } else {
+    // Base studio cyclorama gradient
+    const bg = ctx.createLinearGradient(0, 0, w, h);
+    bg.addColorStop(0, profile.bgTop);
+    bg.addColorStop(0.55, profile.bgMid);
+    bg.addColorStop(1, profile.bgBottom);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
 
-  // Key studio radial aura behind product stage
-  const driftX = Math.sin(t * Math.PI * 2) * w * 0.025;
-  const glow = ctx.createRadialGradient(stageCx + driftX, stageCy * 0.92, stageRadius * 0.08, stageCx, stageCy, stageRadius * 1.45);
-  glow.addColorStop(0, profile.glow);
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, w, h);
+    // Key studio radial aura behind product stage
+    const driftX = Math.sin(t * Math.PI * 2) * w * 0.025;
+    const glow = ctx.createRadialGradient(stageCx + driftX, stageCy * 0.92, stageRadius * 0.08, stageCx, stageCy, stageRadius * 1.45);
+    glow.addColorStop(0, profile.glow);
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+  }
 
   // Backdrop motif
   const motif = profile.defaultBackdrop;
   ctx.save();
-  if (motif === 'tech-grid') {
+  if (motif === 'solid-color') {
+    // Pure solid studio backdrop without noisy grid or bokeh motifs
+  } else if (motif === 'tech-grid') {
     ctx.strokeStyle = profile.lightMode ? 'rgba(37, 99, 235, 0.08)' : 'rgba(125, 211, 252, 0.10)';
     ctx.lineWidth = 1;
     const step = Math.max(26, Math.round(Math.min(w, h) * 0.065));
@@ -447,8 +484,19 @@ export function drawSceneFrame(
     image instanceof HTMLImageElement &&
     !scene.renderedClip;
 
+  // Text configuration (size, color, position, time window)
+  const textCfg = stage.textConfig || {};
+  const sceneDurSec = getSceneDurationSec(scene.durationSec);
+  const sceneElapsedSec = rawT * sceneDurSec;
+  const startSec = Number.isFinite(Number(textCfg.startSec)) ? Math.max(0, Number(textCfg.startSec)) : 0;
+  const endSec = Number.isFinite(Number(textCfg.endSec)) && Number(textCfg.endSec) > 0 ? Number(textCfg.endSec) : sceneDurSec;
+  const withinTextWindow = sceneElapsedSec >= startSec - 0.01 && sceneElapsedSec <= Math.max(startSec, endSec) + 0.01;
+  const headlineScale = textCfg.size === 'sm' ? 0.82 : textCfg.size === 'lg' ? 1.22 : 1;
+  const headlinePosition = textCfg.position || 'bottom';
+  const headlineColor = /^#[0-9a-fA-F]{6}$/.test(textCfg.color || '') ? String(textCfg.color) : isLightBg ? '#101d36' : '#ffffff';
+
   // Determine layout zones based on aspect ratio so product & text NEVER overlap
-  const hasHeadline = !scene.renderedClip && scene.showOnScreenText !== false && Boolean(scene.onScreenText?.trim());
+  const hasHeadline = !scene.renderedClip && scene.showOnScreenText !== false && Boolean(scene.onScreenText?.trim()) && withinTextWindow;
   const hasSubtitle = !scene.renderedClip && showSubtitles && Boolean(scene.narration?.trim());
   const hasCta = sceneIndex === totalScenes - 1 && Boolean(ctaText?.trim()) && rawT > 0.25;
 
@@ -685,20 +733,24 @@ export function drawSceneFrame(
       }
 
       if (hasHeadline) {
-        const headlineSize = Math.max(18, Math.round(minEdge * 0.046));
+        const headlineSize = Math.max(16, Math.round(minEdge * 0.046 * headlineScale));
         ctx.font = `800 ${headlineSize}px "Be Vietnam Pro", sans-serif`;
         const lines = wrapTextLines(ctx, scene.onScreenText, colW).slice(0, 3);
+        const headlineDrawY = headlinePosition === 'top' ? Math.max(height * 0.14, topY + 26) : cursorY;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
+        let hy = headlineDrawY;
         for (const line of lines) {
-          ctx.fillStyle = isLightBg ? '#101d36' : '#ffffff';
-          ctx.shadowColor = isLightBg ? 'transparent' : 'rgba(0,0,0,0.45)';
+          ctx.fillStyle = headlineColor;
+          ctx.shadowColor = isLightBg ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.48)';
           ctx.shadowBlur = 8;
-          ctx.fillText(line, colX, cursorY);
-          cursorY += headlineSize * 1.24;
+          ctx.fillText(line, colX, hy);
+          hy += headlineSize * 1.24;
         }
         ctx.shadowBlur = 0;
-        cursorY += Math.round(minEdge * 0.025);
+        if (headlinePosition !== 'top') {
+          cursorY = hy + Math.round(minEdge * 0.025);
+        }
       }
 
       if (hasSubtitle) {
@@ -766,22 +818,36 @@ export function drawSceneFrame(
       }
 
       if (hasHeadline) {
-        const headSize = Math.max(16, Math.round(minEdge * 0.044));
+        const headSize = Math.max(14, Math.round(minEdge * 0.044 * headlineScale));
         ctx.font = `800 ${headSize}px "Be Vietnam Pro", sans-serif`;
         const lines = wrapTextLines(ctx, scene.onScreenText, width - padX * 2).slice(0, 2);
         const blockH = lines.length * (headSize * 1.24);
         let y = nextBottomY - blockH;
+        if (headlinePosition === 'top') {
+          y = topY + Math.max(34, Math.round(minEdge * 0.068));
+        } else if (headlinePosition === 'center') {
+          y = Math.max(topY + 40, Math.round((height - blockH) * 0.52));
+        }
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
+        if (headlinePosition === 'center') {
+          const scrimPadY = Math.round(minEdge * 0.016);
+          ctx.fillStyle = isLightBg ? 'rgba(255,255,255,0.78)' : 'rgba(10,18,36,0.58)';
+          ctx.beginPath();
+          ctx.roundRect(padX, y - scrimPadY, width - padX * 2, blockH + scrimPadY * 2, Math.round(minEdge * 0.02));
+          ctx.fill();
+        }
         for (const line of lines) {
-          ctx.fillStyle = isLightBg ? '#101d36' : '#ffffff';
-          ctx.shadowColor = isLightBg ? 'transparent' : 'rgba(0,0,0,0.48)';
+          ctx.fillStyle = headlineColor;
+          ctx.shadowColor = isLightBg ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.52)';
           ctx.shadowBlur = 10;
           ctx.fillText(line, width / 2, y);
           y += headSize * 1.24;
         }
         ctx.shadowBlur = 0;
-        nextBottomY -= blockH + Math.round(height * 0.018);
+        if (headlinePosition === 'bottom') {
+          nextBottomY -= blockH + Math.round(height * 0.018);
+        }
       }
 
       if (hasCta) {
@@ -1145,6 +1211,9 @@ export async function renderProjectVideo(options: {
       muxer.finalize();
 
       const blob = new Blob([target.buffer], { type: 'video/mp4' });
+      if (blob.size <= 0) {
+        throw new Error('Tệp MP4 tạo ra bị rỗng; chuyển sang chế độ ghi hình tương thích.');
+      }
       onProgress(100, 'Hoàn tất xuất MP4!');
       return {
         blob,
@@ -1281,6 +1350,9 @@ export async function renderProjectVideo(options: {
 
     if (recorder.state !== 'inactive') recorder.stop();
     const blob = await stopped;
+    if (!blob || blob.size <= 0) {
+      throw new Error('Trình duyệt không ghi được dữ liệu video (0 byte). Vui lòng thử độ phân giải thấp hơn hoặc trình duyệt khác.');
+    }
     const format = actualMime.includes('mp4') ? 'mp4' : 'webm';
     onProgress(100, 'Hoàn tất dựng video!');
     return {

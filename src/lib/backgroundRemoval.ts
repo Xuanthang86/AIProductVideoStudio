@@ -9,6 +9,7 @@ export interface CutoutResult {
   canvas: HTMLCanvasElement;
   cutoutApplied: boolean;
   alreadyTransparent: boolean;
+  complexBackground?: boolean;
   coverageRatio: number;
   notice?: string;
 }
@@ -231,14 +232,16 @@ export function getProductCutout(
   }
   const fgRatio = 1 - bgPixels / totalPixels;
 
+  const isComplexBg = bgSeeds.length >= 6;
   if (fgRatio < 0.06 || fgRatio > 0.96) {
     const notice = fgRatio < 0.06
       ? 'Ảnh nền và chủ thể gần tương đồng; giảm mức tách nền hoặc giữ ảnh gốc để bảo toàn sản phẩm.'
-      : 'Ảnh có hậu cảnh phức tạp nên giữ nguyên toàn khung hình nhằm bảo toàn chi tiết sản phẩm.';
+      : 'Ảnh có hậu cảnh phức tạp hoặc không đồng nhất; hệ thống tự giữ nguyên toàn khung hình nhằm bảo toàn chi tiết sản phẩm.';
     const untouched: CutoutResult = {
       canvas: workCanvas,
       cutoutApplied: false,
       alreadyTransparent: false,
+      complexBackground: true,
       coverageRatio: 1,
       notice,
     };
@@ -298,6 +301,10 @@ export function getProductCutout(
     }
   }
 
+  const complexNotice = isComplexBg
+    ? 'Hậu cảnh ảnh có nhiều vùng màu khác nhau: tách nền theo màu biên chỉ phù hợp nền trơn/sáng. Hãy kiểm tra xem trước hoặc điều chỉnh độ nhạy.'
+    : undefined;
+
   if (maxX > minX + 4 && maxY > minY + 4) {
     const pad = Math.round(Math.max(w, h) * 0.02);
     const cx0 = Math.max(0, minX - pad);
@@ -314,7 +321,9 @@ export function getProductCutout(
         canvas: cropped,
         cutoutApplied: true,
         alreadyTransparent: false,
+        complexBackground: isComplexBg,
         coverageRatio: fgRatio,
+        ...(complexNotice ? { notice: complexNotice } : {}),
       };
       cacheResult(cacheKey, res);
       return res;
@@ -325,7 +334,9 @@ export function getProductCutout(
     canvas: workCanvas,
     cutoutApplied: true,
     alreadyTransparent: false,
+    complexBackground: isComplexBg,
     coverageRatio: fgRatio,
+    ...(complexNotice ? { notice: complexNotice } : {}),
   };
   cacheResult(cacheKey, res);
   return res;

@@ -646,24 +646,6 @@ export default function App() {
                 })}
               </div>
             </section>
-
-            <section className="studio-callout section-wrap" id="studio">
-              <div className="callout-box">
-                <div className="callout-icon">
-                  <WandSparkles size={24} />
-                </div>
-                <div className="callout-copy">
-                  <span className="eyebrow">VIDEO STUDIO</span>
-                  <h2>Sẵn sàng dựng video cho sản phẩm của bạn?</h2>
-                  <p>
-                    Bắt đầu với phong cách <b>{selected}</b> hoặc chọn mẫu có sẵn trong thư viện.
-                  </p>
-                </div>
-                <button type="button" className="primary-btn" onClick={handleHeroStart}>
-                  Mở Video Studio <ArrowRight size={17} />
-                </button>
-              </div>
-            </section>
           </>
         )}
 

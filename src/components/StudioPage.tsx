@@ -27,6 +27,7 @@ import {
   WandSparkles,
 } from 'lucide-react';
 import { api, formatBytes, normalizeImageMimeType } from '../lib/api';
+import { getProductCutout } from '../lib/backgroundRemoval';
 import {
   applyVideoDurationWorkaround,
   checkDeviceRenderSafety,
@@ -119,6 +120,7 @@ const SCENE_ROLE_LABELS: Record<SceneRole, string> = {
 
 const BACKDROP_OPTIONS: Array<{ value: SceneBackdropStyle; label: string }> = [
   { value: 'auto-industry', label: 'Tự động theo ngành hàng' },
+  { value: 'solid-color', label: 'Màu nền đơn sắc tùy chọn' },
   { value: 'luxury-pedestal', label: 'Bục trưng bày sang trọng' },
   { value: 'minimal-studio', label: 'Studio tối giản cao cấp' },
   { value: 'tech-grid', label: 'Lưới công nghệ tương lai' },
@@ -132,6 +134,77 @@ const LIGHTING_PRESET_OPTIONS: Array<{ value: SceneLightingPreset; label: string
   { value: 'editorial-contrast', label: 'Editorial (Tương phản cao)' },
   { value: 'cool-tech', label: 'Cool Tech (Sắc nét xanh)' },
 ];
+
+function CutoutPreviewStrip({
+  image,
+  imageUrl,
+  sensitivity,
+  sourceKey,
+}: {
+  image: HTMLImageElement | null | undefined;
+  imageUrl: string;
+  sensitivity: number;
+  sourceKey: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cutout = useMemo(() => {
+    if (!image) return null;
+    return getProductCutout(image, sourceKey, { sensitivity });
+  }, [image, sourceKey, sensitivity]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !cutout) return;
+    canvas.width = cutout.canvas.width;
+    canvas.height = cutout.canvas.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(cutout.canvas, 0, 0);
+  }, [cutout]);
+
+  if (!imageUrl) {
+    return (
+      <div className="info-strip" style={{ marginTop: 4 }}>
+        Hãy chọn hoặc tải ảnh cho phân cảnh này để xem trước tách nền.
+      </div>
+    );
+  }
+
+  return (
+    <div className="cutout-preview-box">
+      <div className="cutout-preview-grid">
+        <div className="cutout-preview-tile">
+          <small>Trước (Ảnh gốc)</small>
+          <img
+            src={imageUrl}
+            alt="Ảnh gốc trước khi tách nền"
+            crossOrigin={imageUrl.startsWith('data:') || imageUrl.startsWith('blob:') ? undefined : 'anonymous'}
+          />
+        </div>
+        <div className="cutout-preview-tile is-checkerboard">
+          <small>Sau (Tách nền trình duyệt)</small>
+          {cutout ? (
+            <canvas ref={canvasRef} />
+          ) : (
+            <span className="muted-copy">Đang xử lý ảnh...</span>
+          )}
+        </div>
+      </div>
+      {cutout && (
+        <small className="muted-copy">
+          Độ phủ chủ thể giữ lại: <b>{Math.round(cutout.coverageRatio * 100)}%</b> · Thuật toán biên Canvas 2D (không cần GPU server).
+        </small>
+      )}
+      {cutout?.notice && (
+        <div className="warning-strip compact" role="status">
+          <AlertTriangle size={14} />
+          <span>{cutout.notice}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function StudioPage({
   industries,
@@ -211,6 +284,8 @@ export default function StudioPage({
   const [sceneAssistBusyIndex, setSceneAssistBusyIndex] = useState<number | null>(null);
   const [sceneInstructions, setSceneInstructions] = useState<Record<number, string>>({});
   const [sceneDiffs, setSceneDiffs] = useState<Record<number, SceneDiffSnapshot>>({});
+  const [previewSceneOverride, setPreviewSceneOverride] = useState<Record<number, 'before' | 'after'>>({});
+  const [editedDurationIndices, setEditedDurationIndices] = useState<Set<number>>(new Set());
   const [sceneReviews, setSceneReviews] = useState<Record<string, SceneReview>>({});
   const [sceneRenderingIndex, setSceneRenderingIndex] = useState<number | null>(null);
   const [sceneRenderProgress, setSceneRenderProgress] = useState(0);
@@ -269,6 +344,9 @@ export default function StudioPage({
     }
     return { approved, readyPending, needsUpdate, failed };
   }, [scenes, sceneReviews, sceneRenderErrors, productId]);
+
+  const allScenesApproved = scenes.length > 0 && sceneStats.approved === scenes.length;
+  const canCompositeMerge = scriptConfirmed && allScenesApproved && !batchRendering && sceneRenderingIndex === null;
 
   const activeWorkflowStep = useMemo(() => {
     if (renderedVideo || savedOutputUrl) return 5;
@@ -467,7 +545,11 @@ export default function StudioPage({
       }
       acc += dur;
     }
-    const activeScene = scenes[idx];
+    const activeSceneBase = scenes[idx];
+    const activeScene =
+      previewSceneOverride[idx] === 'before' && sceneDiffs[idx]?.before
+        ? sceneDiffs[idx].before
+        : activeSceneBase;
     const activeDur = getSceneDurationSec(activeScene.durationSec);
     const progress = (previewTime - acc) / activeDur;
     drawSceneFrame(ctx, dims.width, dims.height, {
@@ -481,7 +563,7 @@ export default function StudioPage({
       industry,
       cutoutCache: cutoutCacheRef.current,
     });
-  }, [previewTime, scenes, aspectRatio, ctaText, selectedProduct, title, industry, imageCacheRevision]);
+  }, [previewTime, scenes, aspectRatio, ctaText, selectedProduct, title, industry, imageCacheRevision, previewSceneOverride, sceneDiffs]);
 
   // Playback timer
   useEffect(() => {
@@ -513,7 +595,44 @@ export default function StudioPage({
     setPreviewTime(startSec + 0.05);
   };
 
-  const applyCustomDuration = (rawValue: string | number) => {
+  const balanceScenesList = (
+    sourceList: VideoScene[],
+    targetTotal: number,
+    lockedIndices: Set<number>
+  ): { nextScenes: VideoScene[]; preservedCount: number } => {
+    if (sourceList.length === 0) return { nextScenes: sourceList, preservedCount: 0 };
+    const unlockedIndices = sourceList.map((_, i) => i).filter(i => !lockedIndices.has(i));
+    const useLocks = unlockedIndices.length > 0 && lockedIndices.size > 0;
+    const lockedTotal = useLocks
+      ? sourceList.reduce((sum, s, i) => (lockedIndices.has(i) ? sum + getSceneDurationSec(s.durationSec) : sum), 0)
+      : 0;
+    const targetIndices = useLocks ? unlockedIndices : sourceList.map((_, i) => i);
+    const remainingBudget = Math.max(targetIndices.length * 2, targetTotal - lockedTotal);
+    const unlockedCurrentTotal =
+      targetIndices.reduce((sum, i) => sum + getSceneDurationSec(sourceList[i].durationSec), 0) || targetIndices.length * 5;
+
+    let rem = remainingBudget;
+    const assigned = new Map<number, number>();
+    targetIndices.forEach((sceneIdx, pos) => {
+      const leftAfter = targetIndices.length - 1 - pos;
+      if (leftAfter === 0) {
+        assigned.set(sceneIdx, Math.max(2, Math.min(30, Number(rem.toFixed(1)))));
+      } else {
+        const shareRaw = (getSceneDurationSec(sourceList[sceneIdx].durationSec) / unlockedCurrentTotal) * remainingBudget;
+        const maxAllowedForScene = Math.max(2, rem - leftAfter * 2);
+        const share = Math.max(2, Math.min(30, maxAllowedForScene, Math.round(shareRaw * 2) / 2));
+        assigned.set(sceneIdx, share);
+        rem = Math.max(leftAfter * 2, Number((rem - share).toFixed(1)));
+      }
+    });
+
+    const nextScenes = sourceList.map((s, idx) =>
+      assigned.has(idx) ? { ...s, durationSec: assigned.get(idx) as number } : s
+    );
+    return { nextScenes, preservedCount: useLocks ? lockedIndices.size : 0 };
+  };
+
+  const applyCustomDuration = (rawValue: string | number, autoBalance = false) => {
     const parsed = Math.round(Number(rawValue));
     if (!Number.isFinite(parsed)) {
       setDurationDraft(String(durationSec));
@@ -522,25 +641,29 @@ export default function StudioPage({
     const clamped = Math.min(maxCustomDuration, Math.max(4, parsed));
     setDurationSec(clamped);
     setDurationDraft(String(clamped));
+    if (autoBalance && scenes.length > 0) {
+      const { nextScenes, preservedCount } = balanceScenesList(scenes, clamped, editedDurationIndices);
+      setScenes(nextScenes);
+      setScriptConfirmed(false);
+      setMessage(
+        preservedCount > 0
+          ? `Đã tự động điều chỉnh thời lượng về ${clamped}s (giữ nguyên ${preservedCount} cảnh bạn đã chỉnh tay).`
+          : `Đã tự động cân bằng ${scenes.length} phân cảnh theo mục tiêu ${clamped} giây.`
+      );
+    }
   };
 
   const balanceScenesToTargetDuration = () => {
     if (scenes.length === 0) return;
     const target = Math.min(maxCustomDuration, Math.max(4, durationSec));
-    const currentTotal = scenes.reduce((sum, s) => sum + getSceneDurationSec(s.durationSec), 0) || scenes.length * 5;
-    let remaining = target;
-    const balanced = scenes.map((s, idx) => {
-      if (idx === scenes.length - 1) {
-        const lastDur = Math.max(2, Math.min(30, Number(remaining.toFixed(1))));
-        return { ...s, durationSec: lastDur };
-      }
-      const share = Math.max(2, Math.min(30, Math.round(((getSceneDurationSec(s.durationSec) / currentTotal) * target) * 2) / 2));
-      remaining = Math.max(2, remaining - share);
-      return { ...s, durationSec: share };
-    });
-    setScenes(balanced);
+    const { nextScenes, preservedCount } = balanceScenesList(scenes, target, editedDurationIndices);
+    setScenes(nextScenes);
     setScriptConfirmed(false);
-    setMessage(`Đã phân bổ lại thời lượng ${scenes.length} phân cảnh theo tổng ${target} giây.`);
+    setMessage(
+      preservedCount > 0
+        ? `Đã phân bổ lại các cảnh chưa khóa theo ${target}s (vẫn giữ ${preservedCount} cảnh đã chỉnh tay).`
+        : `Đã phân bổ lại thời lượng ${scenes.length} phân cảnh theo tổng ${target} giây.`
+    );
   };
 
   const runQuickProductAnalysis = async () => {
@@ -567,7 +690,7 @@ export default function StudioPage({
     }
   };
 
-  const applyVariant = (variant: ScriptVariant, prod: Product | null) => {
+  const applyVariant = (variant: ScriptVariant, prod: Product | null, showSwitchToast = false) => {
     const imgs = prod?.images || [];
     const roles: SceneRole[] = ['intro', 'usp', 'detail', 'lifestyle', 'cta'];
     const mapped: VideoScene[] = variant.scenes.map((s, i) => {
@@ -577,6 +700,7 @@ export default function StudioPage({
       const role = s.sceneRole || (i === 0 ? 'intro' : i === variant.scenes.length - 1 ? 'cta' : roles[i % roles.length]);
       return {
         ...s,
+        id: undefined,
         sortOrder: i,
         durationSec: getSceneDurationSec(s.durationSec),
         sceneTitle: s.sceneTitle || `Phân cảnh ${i + 1}`,
@@ -590,22 +714,31 @@ export default function StudioPage({
           bgMode: 'original',
           cutoutSensitivity: 28,
           backdropStyle: 'auto-industry',
+          customBgColor: '#ffffff',
           productScale: 1,
           productOffsetX: 0,
           productOffsetY: 0,
           shadowIntensity: 0.65,
           lightingPreset: 'soft-studio',
           motionSpeed: 1,
+          textConfig: { size: 'md', position: 'bottom' },
         },
       };
     });
     setScenes(mapped);
     setScriptConfirmed(false);
+    setSceneReviews({});
     setSceneDiffs({});
+    setSceneInstructions({});
     setSceneRenderErrors({});
+    setPreviewSceneOverride({});
+    setEditedDurationIndices(new Set());
     if (variant.ctaText) setCtaText(variant.ctaText);
     setIsPlayingPreview(false);
     setPreviewTime(0);
+    if (showSwitchToast) {
+      setMessage(`Đã chuyển sang ${variant.variantName} (${mapped.length} phân cảnh). Hãy xem lại nội dung trước khi xác nhận.`);
+    }
   };
 
   const generateScripts = async () => {
@@ -868,6 +1001,7 @@ export default function StudioPage({
           model: result.model,
         },
       }));
+      setPreviewSceneOverride(prev => ({ ...prev, [index]: 'after' }));
       seekToScene(index, scenes.map((s, idx) => (idx === index ? mergedAfter : s)));
       setMessage(
         `Đã ${sceneInstructions[index]?.trim() ? 'chỉnh sửa' : 'phân tích'} Phân cảnh ${index + 1} (${result.model}).${result.fallbackReason ? ` Lưu ý: ${result.fallbackReason}` : ''}`
@@ -888,7 +1022,27 @@ export default function StudioPage({
       delete copy[index];
       return copy;
     });
+    setPreviewSceneOverride(prev => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+    seekToScene(index, scenes.map((s, idx) => (idx === index ? snap.before : s)));
     setMessage(`Đã hoàn tác chỉnh sửa AI cho Phân cảnh ${index + 1}.`);
+  };
+
+  const acceptSceneAssist = (index: number) => {
+    setSceneDiffs(prev => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+    setPreviewSceneOverride(prev => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+    setMessage(`Đã chấp nhận phiên bản chỉnh sửa cho Phân cảnh ${index + 1}. Hãy dựng lại phân cảnh để cập nhật clip.`);
   };
 
   const moveScene = (index: number, dir: -1 | 1) => {
@@ -1112,18 +1266,31 @@ export default function StudioPage({
     }
   };
 
-  const renderBatchScenes = async (onlyFailed = false) => {
+  const renderBatchScenes = async (mode: 'all' | 'failed' | 'missing' = 'all') => {
     if (scenes.length === 0) return;
     setError('');
     setMessage('');
     setBatchRendering(true);
     try {
       const activeProjectId = await saveProject();
-      const saved = await api<{ scenes: VideoScene[] }>(`/api/projects/${activeProjectId}`);
+      const saved = await api<{ scenes: VideoScene[]; sceneReviews?: SceneReview[] }>(`/api/projects/${activeProjectId}`);
+      const reviewMap = Object.fromEntries((saved.sceneReviews || []).map(r => [r.sceneId, r]));
       const targetIndices = saved.scenes
         .map((s, idx) => ({ s, idx }))
-        .filter(({ idx }) => (onlyFailed ? Boolean(sceneRenderErrors[idx]) : true))
+        .filter(({ s, idx }) => {
+          if (mode === 'failed') return Boolean(sceneRenderErrors[idx]);
+          if (mode === 'missing') {
+            const rev = s.id ? reviewMap[s.id] : undefined;
+            return !rev || rev.status !== 'APPROVED' || rev.sceneSignature !== getSceneSignature(s);
+          }
+          return true;
+        })
         .map(({ idx }) => idx);
+
+      if (targetIndices.length === 0) {
+        setMessage('Tất cả phân cảnh đều đã dựng và khớp với kịch bản mới nhất.');
+        return;
+      }
 
       let successCount = 0;
       let failCount = 0;
@@ -1150,7 +1317,7 @@ export default function StudioPage({
       }
 
       if (failCount === 0) {
-        setMessage(`Đã dựng xong toàn bộ ${successCount} phân cảnh! Hãy kiểm duyệt từng cảnh rồi bấm "GHÉP VIDEO HOÀN CHỈNH".`);
+        setMessage(`Đã dựng xong ${successCount} phân cảnh! Hãy xem lại và bấm "Xác nhận phân cảnh" trên từng cảnh rồi ghép video hoàn chỉnh.`);
       } else {
         setError(`Đã dựng xong ${successCount} cảnh, có ${failCount} cảnh lỗi. Bạn có thể bấm "Thử lại cảnh lỗi" mà không làm mất các cảnh đã xong.`);
       }
@@ -1189,6 +1356,16 @@ export default function StudioPage({
   const handleRenderMp4 = async () => {
     if (scenes.length === 0) {
       setError('Vui lòng tạo kịch bản hoặc thêm ít nhất 1 phân cảnh trước khi ghép video.');
+      return;
+    }
+    if (!scriptConfirmed) {
+      setError('Vui lòng nhấn "Xác nhận kịch bản" ở Mục 2 trước khi ghép video hoàn chỉnh.');
+      return;
+    }
+    if (!allScenesApproved) {
+      setError(
+        `Chưa thể ghép video hoàn chỉnh: mới có ${sceneStats.approved}/${scenes.length} phân cảnh được dựng & xác nhận. Hãy dựng và bấm "Xác nhận phân cảnh" cho toàn bộ các cảnh còn lại.`
+      );
       return;
     }
 
@@ -1517,7 +1694,13 @@ export default function StudioPage({
                         setDurationSec(Math.round(v));
                       }
                     }}
-                    onBlur={() => applyCustomDuration(durationDraft)}
+                    onBlur={() => applyCustomDuration(durationDraft, scenes.length > 0)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        applyCustomDuration(durationDraft, scenes.length > 0);
+                      }
+                    }}
                   />
                   <span className="duration-unit">giây</span>
                 </div>
@@ -1527,7 +1710,7 @@ export default function StudioPage({
                       key={d}
                       type="button"
                       className={durationSec === d ? 'duration-chip active' : 'duration-chip'}
-                      onClick={() => applyCustomDuration(d)}
+                      onClick={() => applyCustomDuration(d, scenes.length > 0)}
                     >
                       {d}s
                     </button>
@@ -1679,10 +1862,11 @@ export default function StudioPage({
                   <button
                     key={i}
                     type="button"
+                    aria-pressed={activeVariantIdx === i}
                     className={activeVariantIdx === i ? 'variant-tab active' : 'variant-tab'}
                     onClick={() => {
                       setActiveVariantIdx(i);
-                      applyVariant(v, selectedProduct);
+                      applyVariant(v, selectedProduct, true);
                     }}
                   >
                     <strong>{v.variantName}</strong>
@@ -1709,7 +1893,7 @@ export default function StudioPage({
                   </strong>
                   <small>
                     {scriptConfirmed
-                      ? 'Bạn có thể dựng video từng phân cảnh, dựng hàng loạt hoặc chuyển ngay sang ghép video hoàn chỉnh.'
+                      ? 'Bạn có thể dựng video từng phân cảnh, dựng hàng loạt hoặc xác nhận toàn bộ phân cảnh trước khi ghép.'
                       : 'Kiểm tra lời thoại, chữ trên màn hình, vai trò ảnh và nhấn "Xác nhận kịch bản" khi sẵn sàng.'}
                   </small>
                 </div>
@@ -1730,7 +1914,7 @@ export default function StudioPage({
                     type="button"
                     className="secondary-btn"
                     disabled={batchRendering || sceneRenderingIndex !== null || rendering}
-                    onClick={() => void renderBatchScenes(false)}
+                    onClick={() => void renderBatchScenes('all')}
                   >
                     {batchRendering ? <Loader2 size={14} className="spin" /> : <Film size={14} />}
                     {batchRendering ? 'Đang dựng hàng loạt...' : 'Dựng toàn bộ phân cảnh'}
@@ -1740,7 +1924,7 @@ export default function StudioPage({
                       type="button"
                       className="secondary-btn danger-outline"
                       disabled={batchRendering || sceneRenderingIndex !== null}
-                      onClick={() => void renderBatchScenes(true)}
+                      onClick={() => void renderBatchScenes('failed')}
                     >
                       <RefreshCw size={14} /> Thử lại cảnh lỗi ({sceneStats.failed})
                     </button>
@@ -1806,7 +1990,7 @@ export default function StudioPage({
                   const diff = sceneDiffs[idx];
 
                   return (
-                    <div key={scene.id || `scene-${idx}`} className="scene-card">
+                    <div key={`v${activeVariantIdx}-${scene.id || idx}`} className="scene-card">
                       <div className="scene-card-head wrap">
                         <div className="scene-card-title-group">
                           <strong>Phân cảnh {idx + 1}</strong>
@@ -1880,18 +2064,110 @@ export default function StudioPage({
                         </label>
 
                         <label className="field-label">
-                          Thời lượng (giây)
+                          Thời lượng (giây){editedDurationIndices.has(idx) ? ' · Đã khóa tay' : ''}
                           <input
                             type="number"
+                            aria-label={`Thời lượng Phân cảnh ${idx + 1}`}
                             min={2}
                             max={30}
                             step={0.5}
                             value={scene.durationSec || ''}
-                            onChange={e => updateScene(idx, { durationSec: e.target.value === '' ? 0 : Math.min(30, Math.max(2, Number(e.target.value) || 0)) })}
+                            onChange={e => {
+                              setEditedDurationIndices(prev => new Set(prev).add(idx));
+                              updateScene(idx, { durationSec: e.target.value === '' ? 0 : Math.min(30, Math.max(2, Number(e.target.value) || 0)) });
+                            }}
                             onBlur={() => updateScene(idx, { durationSec: Math.min(30, Math.max(2, Number(scene.durationSec) || 2)) })}
                           />
                         </label>
                       </div>
+
+                      {scene.showOnScreenText !== false && (
+                        <div className="scene-text-style-bar">
+                          <label className="field-label">
+                            Cỡ chữ
+                            <select
+                              aria-label={`Cỡ chữ Phân cảnh ${idx + 1}`}
+                              value={stage.textConfig?.size || 'md'}
+                              onChange={e =>
+                                updateSceneStage(idx, {
+                                  textConfig: { ...(stage.textConfig || {}), size: e.target.value as 'sm' | 'md' | 'lg' },
+                                })
+                              }
+                            >
+                              <option value="sm">Nhỏ</option>
+                              <option value="md">Vừa</option>
+                              <option value="lg">Lớn</option>
+                            </select>
+                          </label>
+                          <label className="field-label">
+                            Vị trí chữ
+                            <select
+                              aria-label={`Vị trí chữ Phân cảnh ${idx + 1}`}
+                              value={stage.textConfig?.position || 'bottom'}
+                              onChange={e =>
+                                updateSceneStage(idx, {
+                                  textConfig: { ...(stage.textConfig || {}), position: e.target.value as 'top' | 'center' | 'bottom' },
+                                })
+                              }
+                            >
+                              <option value="top">Phía trên</option>
+                              <option value="center">Chính giữa</option>
+                              <option value="bottom">Phía dưới</option>
+                            </select>
+                          </label>
+                          <label className="field-label">
+                            Màu chữ
+                            <div className="color-picker-inline">
+                              <input
+                                type="color"
+                                aria-label={`Màu chữ Phân cảnh ${idx + 1}`}
+                                value={stage.textConfig?.color || '#ffffff'}
+                                onChange={e =>
+                                  updateSceneStage(idx, {
+                                    textConfig: { ...(stage.textConfig || {}), color: e.target.value },
+                                  })
+                                }
+                              />
+                              <span>{stage.textConfig?.color || 'Tự động'}</span>
+                            </div>
+                          </label>
+                          <div className="field-label">
+                            <span>Hiện chữ từ – đến (s)</span>
+                            <div className="text-timing-inputs">
+                              <input
+                                type="number"
+                                aria-label={`Bắt đầu hiện chữ Phân cảnh ${idx + 1}`}
+                                min={0}
+                                max={Math.max(1, getSceneDurationSec(scene.durationSec))}
+                                step={0.5}
+                                value={stage.textConfig?.startSec ?? 0}
+                                onChange={e =>
+                                  updateSceneStage(idx, {
+                                    textConfig: { ...(stage.textConfig || {}), startSec: Math.max(0, Number(e.target.value) || 0) },
+                                  })
+                                }
+                              />
+                              <span>–</span>
+                              <input
+                                type="number"
+                                aria-label={`Kết thúc hiện chữ Phân cảnh ${idx + 1}`}
+                                min={0.5}
+                                max={Math.max(1, getSceneDurationSec(scene.durationSec))}
+                                step={0.5}
+                                value={stage.textConfig?.endSec ?? getSceneDurationSec(scene.durationSec)}
+                                onChange={e =>
+                                  updateSceneStage(idx, {
+                                    textConfig: {
+                                      ...(stage.textConfig || {}),
+                                      endSec: Math.min(getSceneDurationSec(scene.durationSec), Math.max(0.5, Number(e.target.value) || getSceneDurationSec(scene.durationSec))),
+                                    },
+                                  })
+                                }
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       <label className="field-label">
                         Lời thoại / Phụ đề
@@ -2027,6 +2303,22 @@ export default function StudioPage({
                               ))}
                             </select>
                           </label>
+                          {stage.backdropStyle === 'solid-color' && (
+                            <label className="field-label">
+                              Màu nền đơn sắc
+                              <div className="color-picker-inline">
+                                <input
+                                  type="color"
+                                  aria-label={`Chọn màu nền Phân cảnh ${idx + 1}`}
+                                  value={stage.customBgColor || '#ffffff'}
+                                  onChange={e => updateSceneStage(idx, { customBgColor: e.target.value })}
+                                />
+                                <button type="button" className="swatch-dot" style={{ background: '#ffffff' }} title="Trắng" onClick={() => updateSceneStage(idx, { customBgColor: '#ffffff' })} />
+                                <button type="button" className="swatch-dot" style={{ background: '#0f172a' }} title="Tối" onClick={() => updateSceneStage(idx, { customBgColor: '#0f172a' })} />
+                                <button type="button" className="swatch-dot" style={{ background: '#e0f2fe' }} title="Xanh dịu" onClick={() => updateSceneStage(idx, { customBgColor: '#e0f2fe' })} />
+                              </div>
+                            </label>
+                          )}
                           <label className="field-label">
                             Ánh sáng sân khấu
                             <select
@@ -2129,6 +2421,16 @@ export default function StudioPage({
                             </div>
                           </label>
                         </div>
+
+                        {isCutoutMode && (
+                          <CutoutPreviewStrip
+                            image={scene.imageUrl ? loadedImgCacheRef.current.get(scene.imageUrl) : null}
+                            imageUrl={scene.imageUrl}
+                            sensitivity={stage.cutoutSensitivity ?? 28}
+                            sourceKey={scene.imageId || scene.imageUrl || `scene-${idx}`}
+                          />
+                        )}
+
                         <small className="muted-copy">
                           * Tách nền và hiệu ứng 2.5D xử lý trực tiếp trên trình duyệt để bảo toàn 100% nhãn mác, logo và màu sắc thật của sản phẩm.
                         </small>
@@ -2142,14 +2444,14 @@ export default function StudioPage({
                             rows={2}
                             value={sceneInstructions[idx] || ''}
                             onChange={e => setSceneInstructions(prev => ({ ...prev, [idx]: e.target.value }))}
-                            placeholder="Ví dụ: tăng kích thước sản phẩm, chuyển sang tách nền sân khấu tối giản, tắt chữ trên video, viết lại lời thoại ngắn gọn hơn..."
+                            placeholder="Ví dụ: đổi nền trắng, đưa chữ lên trên, tăng kích thước sản phẩm, rút ngắn lời thoại..."
                           />
                         </label>
                         <div className="btn-row">
                           <button
                             type="button"
                             className="secondary-btn"
-                            disabled={sceneAssistBusyIndex !== null || (!scene.imageId && !scene.imageUrl)}
+                            disabled={sceneAssistBusyIndex !== null || (!scene.imageId && !scene.imageUrl && !sceneInstructions[idx]?.trim())}
                             onClick={() => void assistScene(idx)}
                           >
                             {sceneAssistBusyIndex === idx ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />}
@@ -2175,9 +2477,34 @@ export default function StudioPage({
                           <div className="scene-diff-card">
                             <div className="scene-diff-head">
                               <strong>So sánh Trước / Sau chỉnh sửa ({diff.model})</strong>
-                              <button type="button" className="secondary-btn" onClick={() => undoSceneAssist(idx)}>
-                                <RotateCcw size={13} /> Hoàn tác
-                              </button>
+                              <div className="btn-row">
+                                <button
+                                  type="button"
+                                  className={(previewSceneOverride[idx] || 'after') === 'before' ? 'duration-chip active' : 'duration-chip'}
+                                  onClick={() => {
+                                    setPreviewSceneOverride(prev => ({ ...prev, [idx]: 'before' }));
+                                    seekToScene(idx);
+                                  }}
+                                >
+                                  Xem bản trước
+                                </button>
+                                <button
+                                  type="button"
+                                  className={(previewSceneOverride[idx] || 'after') === 'after' ? 'duration-chip active' : 'duration-chip'}
+                                  onClick={() => {
+                                    setPreviewSceneOverride(prev => ({ ...prev, [idx]: 'after' }));
+                                    seekToScene(idx);
+                                  }}
+                                >
+                                  Xem bản sau
+                                </button>
+                                <button type="button" className="secondary-btn" onClick={() => undoSceneAssist(idx)}>
+                                  <RotateCcw size={13} /> Hoàn tác
+                                </button>
+                                <button type="button" className="primary-btn" onClick={() => acceptSceneAssist(idx)}>
+                                  <Check size={13} /> Chấp nhận phiên bản mới
+                                </button>
+                              </div>
                             </div>
                             <p className="muted-copy" style={{ marginBottom: 8 }}>{diff.summary}</p>
                             <div className="scene-diff-cols">
@@ -2456,6 +2783,31 @@ export default function StudioPage({
                 </div>
               )}
 
+              {scenes.length > 0 && !canCompositeMerge && (
+                <div className="warning-strip compact composite-gate-strip" role="status">
+                  <AlertTriangle size={14} />
+                  <div>
+                    {!scriptConfirmed ? (
+                      <span>Chưa mở khóa: Hãy nhấn <b>"Xác nhận kịch bản"</b> ở Mục 2 trước.</span>
+                    ) : (
+                      <span>
+                        Cần dựng và bấm <b>"Xác nhận phân cảnh"</b> cho đủ {scenes.length} cảnh (hiện đạt {sceneStats.approved}/{scenes.length}).
+                      </span>
+                    )}
+                    {scriptConfirmed && !allScenesApproved && (
+                      <button
+                        type="button"
+                        className="inline-link-btn"
+                        disabled={batchRendering || sceneRenderingIndex !== null}
+                        onClick={() => void renderBatchScenes('missing')}
+                      >
+                        Dựng tất cả cảnh còn thiếu
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {rendering ? (
                 <div className="render-progress-box">
                   <div className="render-progress-top">
@@ -2475,7 +2827,8 @@ export default function StudioPage({
                 <button
                   type="button"
                   className="primary-btn full-width"
-                  disabled={scenes.length === 0 || batchRendering || sceneRenderingIndex !== null}
+                  disabled={!canCompositeMerge}
+                  title={!canCompositeMerge ? 'Cần xác nhận kịch bản và xác nhận toàn bộ phân cảnh trước khi ghép video hoàn chỉnh' : undefined}
                   onClick={handleRenderMp4}
                 >
                   <WandSparkles size={16} /> GHÉP VIDEO HOÀN CHỈNH

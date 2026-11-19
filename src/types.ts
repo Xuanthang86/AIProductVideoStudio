@@ -124,22 +124,33 @@ export type SceneBackdropStyle =
   | 'minimal-studio'
   | 'tech-grid'
   | 'warm-lifestyle'
-  | 'botanical-fresh';
+  | 'botanical-fresh'
+  | 'solid-color';
 
 export type SceneLightingPreset = 'soft-studio' | 'golden-hour' | 'editorial-contrast' | 'cool-tech';
 
 export type SceneRole = 'intro' | 'usp' | 'detail' | 'lifestyle' | 'cta' | 'showcase';
 
+export interface SceneTextConfig {
+  size?: 'sm' | 'md' | 'lg';
+  color?: string;
+  position?: 'top' | 'center' | 'bottom';
+  startSec?: number;
+  endSec?: number;
+}
+
 export interface SceneStageConfig {
   bgMode?: 'original' | 'cutout-studio';
   cutoutSensitivity?: number;
   backdropStyle?: SceneBackdropStyle;
+  customBgColor?: string;
   productScale?: number;
   productOffsetX?: number;
   productOffsetY?: number;
   shadowIntensity?: number;
   lightingPreset?: SceneLightingPreset;
   motionSpeed?: number;
+  textConfig?: SceneTextConfig;
 }
 
 export interface VideoScene {
