@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Copy, Download, Edit3, Film, Plus, Search, Trash2 } from 'lucide-react';
 import ConfirmDialog from './ConfirmDialog';
 import { api, formatBytes, formatDate, projectStatusLabel } from '../lib/api';
+import { downloadVideoAsset } from '../lib/videoDownload';
 import type { VideoProject } from '../types';
 
 interface Props {
@@ -18,6 +19,26 @@ export default function MyVideosPage({ onEditProject, onNewVideo }: Props) {
   const [message, setMessage] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<VideoProject | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const handleDownload = async (project: VideoProject) => {
+    if (!project.outputFileUrl || downloadingId) return;
+    setDownloadingId(project.id);
+    setError('');
+    setMessage('');
+    try {
+      const result = await downloadVideoAsset({
+        url: project.outputFileUrl,
+        baseName: project.title || 'video-san-pham',
+        projectId: project.id,
+      });
+      if (result.notice) setMessage(result.notice);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không thể tải video đã lưu.');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -136,9 +157,14 @@ export default function MyVideosPage({ onEditProject, onNewVideo }: Props) {
                 <small className="error-meta">{p.errorMessage}</small>
               ) : null}
               {p.outputFileUrl && p.status === 'COMPLETED' && (
-                <a className="secondary-btn" href={p.outputFileUrl} target="_blank" rel="noreferrer" download>
-                  <Download size={14} /> Tải video đã lưu
-                </a>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  disabled={downloadingId === p.id}
+                  onClick={() => void handleDownload(p)}
+                >
+                  <Download size={14} /> {downloadingId === p.id ? 'Đang tải video...' : 'Tải video đã lưu'}
+                </button>
               )}
               <small className="muted-copy">Cập nhật: {formatDate(p.updatedAt)}</small>
               <div className="project-card-actions">

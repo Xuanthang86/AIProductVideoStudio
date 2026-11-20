@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ConfirmDialog from './ConfirmDialog';
+import { downloadVideoAsset } from '../lib/videoDownload';
 import {
   AlertTriangle,
   ArrowDown,
@@ -438,6 +439,7 @@ export default function StudioPage({
         if (res.project.voiceConfig) setVoiceConfig(res.project.voiceConfig);
         if (res.project.musicConfig) setMusicConfig(res.project.musicConfig);
         setScenes(res.scenes);
+        setActiveSceneIndex(res.scenes.length > 0 ? 0 : -1);
         setSceneReviews(Object.fromEntries((res.sceneReviews || []).map(review => [review.sceneId, review])));
         setScriptConfirmed((res.sceneReviews || []).length > 0 || Boolean(res.project.outputFileUrl));
       })
@@ -782,6 +784,7 @@ export default function StudioPage({
       }
       setVariants(generatedVariants);
       setActiveVariantIdx(0);
+      setActiveSceneIndex(0);
       applyVariant(generatedVariants[0], activeProduct);
       if (res.mode === 'gemini') {
         setScriptNoteType('info');
@@ -1070,6 +1073,11 @@ export default function StudioPage({
     });
     setSceneDiffs({});
     setScriptConfirmed(false);
+    setActiveSceneIndex(prev => {
+      if (prev === index) return target;
+      if (prev === target) return index;
+      return prev;
+    });
   };
 
   const regenerateOneScene = (index: number) => {
@@ -1357,44 +1365,23 @@ export default function StudioPage({
     }
   };
 
-  const downloadVideoFile = async (url: string, baseName: string) => {
-    if (!url) return;
+  const downloadVideoFile = async (
+    url: string,
+    baseName: string,
+    opts?: { projectId?: string; sceneId?: string }
+  ) => {
+    if (!url || downloadBusy) return;
     setDownloadBusy(true);
     setError('');
+    setMessage('');
     try {
-      const parsedUrl = new URL(url, window.location.origin);
-      if ((parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') && parsedUrl.origin !== window.location.origin) {
-        window.open(parsedUrl.toString(), '_blank', 'noopener,noreferrer');
-        return;
-      }
-      if (parsedUrl.pathname.startsWith('/api/media/project-video/')) {
-        parsedUrl.searchParams.set('download', '1');
-      }
-      const response = await fetch(parsedUrl.toString(), { credentials: 'include' });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(payload.error || `Không thể tải video (HTTP ${response.status}).`);
-      }
-      const mimeType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-      if (!mimeType.startsWith('video/')) {
-        const responseText = await response.text().catch(() => '');
-        throw new Error(responseText.includes('<html') || mimeType.includes('text/html')
-          ? 'Máy chủ trả về trang HTML thay vì tệp video. Vui lòng tải lại dự án hoặc liên hệ quản trị hệ thống.'
-          : `Định dạng máy chủ trả về không phải video (${mimeType || 'không xác định'}).`);
-      }
-      const blob = await response.blob();
-      if (!blob.size) throw new Error('Tệp video tải về bị rỗng.');
-      const extension = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('webm') ? 'webm' : 'video';
-      const safeBaseName = baseName.replace(/\\.(mp4|webm)$/i, '').replace(/[^a-zA-Z0-9_-]+/g, '_') || 'product-video';
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      anchor.download = `${safeBaseName}.${extension}`;
-      anchor.style.display = 'none';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+      const result = await downloadVideoAsset({
+        url,
+        baseName,
+        projectId: opts?.projectId,
+        sceneId: opts?.sceneId,
+      });
+      if (result.notice) setMessage(result.notice);
     } catch (downloadError) {
       setError(downloadError instanceof Error ? downloadError.message : 'Không thể tải tệp video.');
     } finally {
@@ -1860,6 +1847,11 @@ export default function StudioPage({
                 </small>
               </div>
               <div className="btn-row">
+                {scenes.length > 0 && activeSceneIndex >= 0 && (
+                  <button type="button" className="secondary-btn" onClick={() => setActiveSceneIndex(-1)}>
+                    Thu gọn tất cả
+                  </button>
+                )}
                 <button type="button" className="secondary-btn" onClick={addEmptyScene}>
                   <Plus size={14} /> Thêm phân cảnh
                 </button>
@@ -1915,6 +1907,7 @@ export default function StudioPage({
                     className={activeVariantIdx === i ? 'variant-tab active' : 'variant-tab'}
                     onClick={() => {
                       setActiveVariantIdx(i);
+                      setActiveSceneIndex(0);
                       applyVariant(v, selectedProduct, true);
                     }}
                   >
@@ -2038,6 +2031,11 @@ export default function StudioPage({
 
                   const diff = sceneDiffs[idx];
                   const isExpandedScene = activeSceneIndex === idx;
+                  const sceneThumbUrl = scene.imageUrl || '';
+                  const sceneRoleLabel = SCENE_ROLE_LABELS[scene.sceneRole || 'showcase'] || 'Giới thiệu';
+                  const sceneDurationLabel = `${getSceneDurationSec(scene.durationSec)}s`;
+                  const sceneMissingMedia = !scene.imageUrl && !scene.aiVideoUrl;
+                  const sceneDownloadUrl = review?.outputFileUrl || scene.aiVideoUrl || '';
 
                   return (
                     <div key={`v${activeVariantIdx}-${scene.id || idx}`} className={`scene-card${isExpandedScene ? ' is-expanded' : ''}`}>
@@ -2048,30 +2046,81 @@ export default function StudioPage({
                           aria-expanded={isExpandedScene}
                           onClick={() => setActiveSceneIndex(isExpandedScene ? -1 : idx)}
                         >
+                          <span className="scene-thumb-wrap" aria-hidden="true">
+                            {sceneThumbUrl ? (
+                              <img src={sceneThumbUrl} alt="" className="scene-thumb-img" />
+                            ) : (
+                              <span className="scene-thumb-empty">#{idx + 1}</span>
+                            )}
+                          </span>
                           <span className="scene-card-title-group">
-                            <strong>Phân cảnh {idx + 1}</strong>
-                            {scene.sceneTitle && <span className="scene-subtitle-tag">{scene.sceneTitle}</span>}
-                            <span className={sceneStatusClass}>{sceneStatusLabel}</span>
+                            <span className="scene-card-title-line">
+                              <strong>Phân cảnh {idx + 1}</strong>
+                              {scene.sceneTitle && <span className="scene-subtitle-tag">{scene.sceneTitle}</span>}
+                            </span>
+                            <span className="scene-card-meta-line">
+                              <span className="scene-meta-chip">{sceneRoleLabel}</span>
+                              <span className="scene-meta-chip">{sceneDurationLabel}</span>
+                              <span className={sceneStatusClass}>{sceneStatusLabel}</span>
+                              {sceneMissingMedia && (
+                                <span className="scene-status-pill is-error">Chưa có ảnh</span>
+                              )}
+                            </span>
                           </span>
                           <span className="scene-expand-indicator" aria-hidden="true">{isExpandedScene ? '−' : '+'}</span>
                         </button>
                         <div className="scene-head-actions">
-                          <button type="button" title="Xem trước phân cảnh này" onClick={() => seekToScene(idx)}>
+                          <button
+                            type="button"
+                            title="Xem trước phân cảnh này"
+                            onClick={e => { e.stopPropagation(); seekToScene(idx); }}
+                          >
                             <Eye size={13} />
                           </button>
-                          <button type="button" title="Tạo lại gợi ý phân cảnh" onClick={() => regenerateOneScene(idx)}>
+                          {sceneDownloadUrl && (
+                            <button
+                              type="button"
+                              title="Tải video phân cảnh này"
+                              disabled={downloadBusy}
+                              onClick={e => {
+                                e.stopPropagation();
+                                void downloadVideoFile(
+                                  sceneDownloadUrl,
+                                  `${title || 'phan-canh'}-canh-${idx + 1}`,
+                                  { sceneId: scene.id }
+                                );
+                              }}
+                            >
+                              <Download size={13} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            title="Tạo lại gợi ý phân cảnh"
+                            onClick={e => { e.stopPropagation(); regenerateOneScene(idx); }}
+                          >
                             <RefreshCw size={13} />
                           </button>
-                          <button type="button" title="Lên" disabled={idx === 0} onClick={() => moveScene(idx, -1)}>
+                          <button
+                            type="button"
+                            title="Lên"
+                            disabled={idx === 0}
+                            onClick={e => { e.stopPropagation(); moveScene(idx, -1); }}
+                          >
                             <ArrowUp size={13} />
                           </button>
-                          <button type="button" title="Xuống" disabled={idx === scenes.length - 1} onClick={() => moveScene(idx, 1)}>
+                          <button
+                            type="button"
+                            title="Xuống"
+                            disabled={idx === scenes.length - 1}
+                            onClick={e => { e.stopPropagation(); moveScene(idx, 1); }}
+                          >
                             <ArrowDown size={13} />
                           </button>
                           <button
                             type="button"
                             title="Xóa phân cảnh"
-                            onClick={() => setDeleteSceneIndex(idx)}
+                            onClick={e => { e.stopPropagation(); setDeleteSceneIndex(idx); }}
                           >
                             <Trash2 size={13} />
                           </button>
@@ -2940,7 +2989,7 @@ export default function StudioPage({
                   type="button"
                   className="secondary-btn full-width"
                   disabled={downloadBusy}
-                  onClick={() => void downloadVideoFile(savedOutputUrl, title || 'product-video')}
+                  onClick={() => void downloadVideoFile(savedOutputUrl, title || 'product-video', { projectId: projectId || undefined })}
                 >
                   <Download size={16} /> {downloadBusy ? 'Đang tải video...' : 'Tải bản đã lưu'}
                 </button>
@@ -2959,6 +3008,13 @@ export default function StudioPage({
           onConfirm={() => {
             const index = deleteSceneIndex;
             setScenes(prev => prev.filter((_, sceneIndex) => sceneIndex !== index).map((s, i) => ({ ...s, sortOrder: i })));
+            setActiveSceneIndex(prev => {
+              const remaining = scenes.length - 1;
+              if (remaining <= 0) return -1;
+              if (prev === index) return Math.min(index, remaining - 1);
+              if (prev > index) return prev - 1;
+              return prev;
+            });
             setSceneInstructions(prev => {
               const next: Record<number, string> = {};
               Object.entries(prev).forEach(([key, val]) => {

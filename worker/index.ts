@@ -914,12 +914,105 @@ async function storeVideoChunksInD1(
   return { url: `${route}?v=${Date.now()}`, fileId: `d1-${scope}-${targetId}` };
 }
 
+function sanitizeDownloadFilename(raw: string | null, extension: string): string {
+  const base = (raw || 'video-san-pham')
+    .trim()
+    .replace(/\.(mp4|webm|mov|m4v)$/i, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return `${base || 'video-san-pham'}.${extension}`;
+}
+
+function extensionFromVideoMime(mimeType: string): string {
+  const lower = (mimeType || '').toLowerCase();
+  if (lower.includes('mp4')) return 'mp4';
+  if (lower.includes('webm')) return 'webm';
+  if (lower.includes('quicktime')) return 'mov';
+  return 'mp4';
+}
+
+async function proxyExternalVideo(
+  request: Request,
+  remoteUrl: string,
+  fallbackMimeType: string,
+  isDownload: boolean,
+  requestedFilename: string | null
+): Promise<Response> {
+  const forwardHeaders: Record<string, string> = {};
+  const rangeHeader = request.headers.get('range');
+  if (rangeHeader && !isDownload) {
+    forwardHeaders.range = rangeHeader;
+  }
+  const upstream = await fetch(remoteUrl, { headers: forwardHeaders });
+  if (!upstream.ok && upstream.status !== 206) {
+    return fail(`Không thể tải tệp video từ máy chủ lưu trữ (HTTP ${upstream.status}).`, 502);
+  }
+  const upstreamType = (upstream.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (upstreamType && !upstreamType.startsWith('video/') && upstreamType !== 'application/octet-stream') {
+    return fail('Tệp từ máy chủ lưu trữ không phải định dạng video hợp lệ.', 502);
+  }
+  const contentType = upstreamType.startsWith('video/') ? upstreamType : fallbackMimeType;
+  const headers: Record<string, string> = {
+    'content-type': contentType,
+    'x-content-type-options': 'nosniff',
+    'accept-ranges': upstream.headers.get('accept-ranges') || 'bytes',
+    'cache-control': 'private, no-store',
+  };
+  const contentLength = upstream.headers.get('content-length');
+  if (contentLength) headers['content-length'] = contentLength;
+  const contentRange = upstream.headers.get('content-range');
+  if (contentRange) headers['content-range'] = contentRange;
+  if (isDownload) {
+    const extension = extensionFromVideoMime(contentType);
+    const filename = sanitizeDownloadFilename(requestedFilename, extension);
+    headers['content-disposition'] = `attachment; filename="${filename}"`;
+  }
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers,
+  });
+}
+
 async function serveChunkedVideo(env: Env, request: Request, actor: UserRow, scope: 'scene' | 'project', targetId: string) {
+  const reqUrl = new URL(request.url);
+  const isDownload = reqUrl.searchParams.get('download') === '1';
+  const requestedFilename = reqUrl.searchParams.get('filename');
+
   const metaRow = await env.DB.prepare('SELECT value_json FROM system_settings WHERE key=?')
     .bind(`video_media_meta:${scope}:${targetId}`)
     .first<{ value_json: string }>();
   const meta = safeJsonParse<{ userId?: string; mimeType?: string; sizeBytes?: number; totalChunks?: number } | null>(metaRow?.value_json, null);
-  if (!meta || !meta.totalChunks || !meta.sizeBytes) return fail('Không tìm thấy tệp video đã lưu.', 404);
+
+  // Fallback for videos stored externally (e.g. ImageKit) instead of D1 chunks
+  if (!meta || !meta.totalChunks || !meta.sizeBytes) {
+    if (scope === 'project') {
+      const proj = await env.DB.prepare('SELECT user_id, title, output_file_url, output_format FROM projects WHERE id=?')
+        .bind(targetId)
+        .first<{ user_id: string; title: string; output_file_url: string | null; output_format: string | null }>();
+      if (!proj || !proj.output_file_url) return fail('Không tìm thấy tệp video đã lưu.', 404);
+      if (proj.user_id !== actor.id && roleRank(actor.role) < roleRank('ADMIN')) {
+        return fail('Bạn không có quyền truy cập video này.', 403);
+      }
+      if (/^https?:\/\//i.test(proj.output_file_url)) {
+        const fallbackMime = proj.output_format?.toLowerCase() === 'webm' ? 'video/webm' : 'video/mp4';
+        return proxyExternalVideo(request, proj.output_file_url, fallbackMime, isDownload, requestedFilename || proj.title);
+      }
+    } else if (scope === 'scene') {
+      const review = await env.DB.prepare('SELECT user_id, video_url, video_mime_type FROM scene_reviews WHERE scene_id=? ORDER BY updated_at DESC LIMIT 1')
+        .bind(targetId)
+        .first<{ user_id: string; video_url: string | null; video_mime_type: string | null }>();
+      if (!review || !review.video_url) return fail('Không tìm thấy tệp video phân cảnh đã lưu.', 404);
+      if (review.user_id !== actor.id && roleRank(actor.role) < roleRank('ADMIN')) {
+        return fail('Bạn không có quyền truy cập video này.', 403);
+      }
+      if (/^https?:\/\//i.test(review.video_url)) {
+        const fallbackMime = review.video_mime_type || 'video/mp4';
+        return proxyExternalVideo(request, review.video_url, fallbackMime, isDownload, requestedFilename || `scene-${targetId}`);
+      }
+    }
+    return fail('Không tìm thấy tệp video đã lưu.', 404);
+  }
+
   if (meta.userId !== actor.id && roleRank(actor.role) < roleRank('ADMIN')) {
     return fail('Bạn không có quyền truy cập video này.', 403);
   }
@@ -936,17 +1029,20 @@ async function serveChunkedVideo(env: Env, request: Request, actor: UserRow, sco
     }
   }
   const rangeHeader = request.headers.get('range');
-  const contentType = meta.mimeType || 'video/webm';
+  const cleanMime = (meta.mimeType || 'video/webm').split(';')[0].trim().toLowerCase();
+  const contentType = cleanMime.startsWith('video/') ? cleanMime : 'video/webm';
   const responseHeaders: Record<string, string> = {
     'content-type': contentType,
+    'x-content-type-options': 'nosniff',
     'accept-ranges': 'bytes',
     'cache-control': 'private, no-store',
   };
-  if (new URL(request.url).searchParams.get('download') === '1') {
-    const extension = contentType.includes('mp4') ? 'mp4' : contentType.includes('webm') ? 'webm' : 'video';
-    responseHeaders['content-disposition'] = `attachment; filename="video-san-pham.${extension}"`;
+  if (isDownload) {
+    const extension = extensionFromVideoMime(contentType);
+    const filename = sanitizeDownloadFilename(requestedFilename, extension);
+    responseHeaders['content-disposition'] = `attachment; filename="${filename}"`;
   }
-  if (rangeHeader) {
+  if (rangeHeader && !isDownload) {
     const m = rangeHeader.match(/bytes=(\d+)-(\d*)/);
     if (m) {
       const start = Math.min(combined.length - 1, Math.max(0, Number(m[1])));
