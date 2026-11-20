@@ -1,8 +1,11 @@
 // Browser-based background removal & subject cutout engine (Canvas 2D, zero paid APIs).
-// Protects product interior details, logos, text labels, and colors via border flood-fill + soft alpha feathering.
+// Multi-cluster perimeter segmentation + soft shadow suppression + color-spill defringe + edge feathering.
 
 export interface CutoutOptions {
   sensitivity?: number; // 10..60 (default 28)
+  featherRadius?: number; // 0..3 (default 1)
+  edgeChoke?: number; // -2..2 (default 0, positive tightens edge)
+  defringeStrength?: number; // 0..1 (default 0.65)
 }
 
 export interface CutoutResult {
@@ -21,8 +24,22 @@ function colorDistanceSq(r1: number, g1: number, b1: number, r2: number, g2: num
   const dr = r1 - r2;
   const dg = g1 - g2;
   const db = b1 - b2;
-  // Perceptual RGB weights
-  return 0.299 * dr * dr + 0.587 * dg * dg + 0.114 * db * db;
+  // Redmean perceptual RGB distance approximation
+  const rMean = (r1 + r2) * 0.5;
+  const wr = 2 + rMean / 256;
+  const wg = 4;
+  const wb = 2 + (255 - rMean) / 256;
+  return (wr * dr * dr + wg * dg * dg + wb * db * db) / 8;
+}
+
+function chromaDistanceSq(r1: number, g1: number, b1: number, r2: number, g2: number, b2: number): number {
+  // Luminance-normalized chromaticity distance (helps suppress neutral shadows on light backgrounds)
+  const l1 = Math.max(1, 0.299 * r1 + 0.587 * g1 + 0.114 * b1);
+  const l2 = Math.max(1, 0.299 * r2 + 0.587 * g2 + 0.114 * b2);
+  const dr = (r1 / l1 - r2 / l2) * 180;
+  const dg = (g1 / l1 - g2 / l2) * 180;
+  const db = (b1 / l1 - b2 / l2) * 180;
+  return dr * dr + dg * dg + db * db;
 }
 
 function cacheResult(key: string, value: CutoutResult) {
@@ -43,14 +60,15 @@ export function getProductCutout(
   options?: CutoutOptions
 ): CutoutResult {
   const sensitivity = Math.min(60, Math.max(10, Math.round(options?.sensitivity ?? 28)));
-  const cacheKey = `${sourceKey}|s=${sensitivity}`;
+  const featherRadius = Math.min(3, Math.max(0, Math.round(options?.featherRadius ?? 1)));
+  const defringeStrength = Math.min(1, Math.max(0, options?.defringeStrength ?? 0.65));
+  const cacheKey = `${sourceKey}|s=${sensitivity}|f=${featherRadius}|d=${defringeStrength.toFixed(2)}`;
   const cached = cutoutCache.get(cacheKey);
   if (cached) return cached;
 
   const natW = Math.max(1, image.naturalWidth || image.width || 1);
   const natH = Math.max(1, image.naturalHeight || image.height || 1);
-  // Process up to 720px max edge for crisp studio edges & fast interactive preview
-  const maxEdge = 720;
+  const maxEdge = 768;
   const scale = Math.min(1, maxEdge / Math.max(natW, natH));
   const w = Math.max(8, Math.round(natW * scale));
   const h = Math.max(8, Math.round(natH * scale));
@@ -60,14 +78,13 @@ export function getProductCutout(
   workCanvas.height = h;
   const ctx = workCanvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) {
-    const fallback: CutoutResult = {
+    return {
       canvas: workCanvas,
       cutoutApplied: false,
       alreadyTransparent: false,
       coverageRatio: 1,
       notice: 'Trình duyệt không hỗ trợ tách nền Canvas.',
     };
-    return fallback;
   }
 
   ctx.drawImage(image, 0, 0, w, h);
@@ -75,7 +92,6 @@ export function getProductCutout(
   try {
     imgData = ctx.getImageData(0, 0, w, h);
   } catch {
-    // Tainted CORS canvas guard: draw cleanly without modifying pixels
     const taintedFallback: CutoutResult = {
       canvas: workCanvas,
       cutoutApplied: false,
@@ -96,21 +112,20 @@ export function getProductCutout(
     if (data[i * 4 + 3] < 230) transparentCount++;
   }
   if (transparentCount / totalPixels > 0.08) {
-    const opaqueRatio = 1 - transparentCount / totalPixels;
     const ready: CutoutResult = {
       canvas: workCanvas,
       cutoutApplied: true,
       alreadyTransparent: true,
-      coverageRatio: opaqueRatio,
+      coverageRatio: 1 - transparentCount / totalPixels,
     };
     cacheResult(cacheKey, ready);
     return ready;
   }
 
-  // 2. Sample perimeter strips (4 corners + border midpoints) to build background color seeds
+  // 2. Sample perimeter strips (corners + borders) to build up to 12 background color clusters
   const sampleCoords: Array<[number, number]> = [];
-  const stepX = Math.max(1, Math.floor(w / 10));
-  const stepY = Math.max(1, Math.floor(h / 10));
+  const stepX = Math.max(1, Math.floor(w / 14));
+  const stepY = Math.max(1, Math.floor(h / 14));
   for (let x = 0; x < w; x += stepX) {
     sampleCoords.push([x, 0], [x, h - 1]);
   }
@@ -119,41 +134,69 @@ export function getProductCutout(
   }
 
   const bgSeeds: Array<[number, number, number]> = [];
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
   for (const [sx, sy] of sampleCoords) {
     const off = (sy * w + sx) * 4;
     const r = data[off];
     const g = data[off + 1];
     const b = data[off + 2];
-    const duplicate = bgSeeds.some(([sr, sg, sb]) => colorDistanceSq(r, g, b, sr, sg, sb) < 18 * 18);
-    if (!duplicate && bgSeeds.length < 8) {
+    sumR += r;
+    sumG += g;
+    sumB += b;
+    const duplicate = bgSeeds.some(([sr, sg, sb]) => colorDistanceSq(r, g, b, sr, sg, sb) < 16 * 16);
+    if (!duplicate && bgSeeds.length < 12) {
       bgSeeds.push([r, g, b]);
     }
   }
+  const avgBgR = sampleCoords.length ? sumR / sampleCoords.length : data[0];
+  const avgBgG = sampleCoords.length ? sumG / sampleCoords.length : data[1];
+  const avgBgB = sampleCoords.length ? sumB / sampleCoords.length : data[2];
 
-  // Fallback median corner color
-  const cornerIdx = (0 * w + 0) * 4;
   if (bgSeeds.length === 0) {
-    bgSeeds.push([data[cornerIdx], data[cornerIdx + 1], data[cornerIdx + 2]]);
+    bgSeeds.push([data[0], data[1], data[2]]);
   }
 
   const hardThresholdSq = sensitivity * sensitivity;
-  const softThresholdSq = (sensitivity * 1.48) * (sensitivity * 1.48);
+  const softThresholdSq = (sensitivity * 1.55) * (sensitivity * 1.55);
+  const shadowChromaTolSq = (sensitivity * 0.55) * (sensitivity * 0.55);
 
-  const isBgLike = (pixelIndex: number, tolSq: number) => {
+  const minBgDistSq = (pixelIndex: number): number => {
     const off = pixelIndex * 4;
     const r = data[off];
     const g = data[off + 1];
     const b = data[off + 2];
+    let best = Infinity;
     for (let s = 0; s < bgSeeds.length; s++) {
       const [sr, sg, sb] = bgSeeds[s];
-      if (colorDistanceSq(r, g, b, sr, sg, sb) <= tolSq) return true;
+      const d = colorDistanceSq(r, g, b, sr, sg, sb);
+      if (d < best) best = d;
+    }
+    return best;
+  };
+
+  const isBgLike = (pixelIndex: number, tolSq: number): boolean => {
+    if (minBgDistSq(pixelIndex) <= tolSq) return true;
+    // Soft shadow suppression: if pixel has nearly identical chromaticity to a bright background
+    // and is moderately darker (typical cast shadow under product), treat as background
+    const off = pixelIndex * 4;
+    const r = data[off];
+    const g = data[off + 1];
+    const b = data[off + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    const bgLum = 0.299 * avgBgR + 0.587 * avgBgG + 0.114 * avgBgB;
+    if (bgLum > 165 && lum > bgLum * 0.58 && lum < bgLum) {
+      if (chromaDistanceSq(r, g, b, avgBgR, avgBgG, avgBgB) <= shadowChromaTolSq) {
+        return true;
+      }
     }
     return false;
   };
 
-  // 3. Border-connected flood fill (protects any enclosed highlights/text inside the product)
+  // 3. Border-connected flood fill (protects enclosed highlights, logos & text inside the product)
   const visited = new Uint8Array(totalPixels);
-  const bgMask = new Uint8Array(totalPixels); // 1 = confirmed background
+  const bgMask = new Uint8Array(totalPixels);
   const queue = new Int32Array(totalPixels);
   let head = 0;
   let tail = 0;
@@ -181,46 +224,19 @@ export function getProductCutout(
     const curr = queue[head++];
     const cx = curr % w;
     const cy = (curr - cx) / w;
-
-    // 4-connected neighbors
-    if (cx > 0) {
-      const n = curr - 1;
-      if (!visited[n]) {
-        visited[n] = 1;
-        if (isBgLike(n, hardThresholdSq)) {
-          bgMask[n] = 1;
-          queue[tail++] = n;
-        }
-      }
-    }
-    if (cx + 1 < w) {
-      const n = curr + 1;
-      if (!visited[n]) {
-        visited[n] = 1;
-        if (isBgLike(n, hardThresholdSq)) {
-          bgMask[n] = 1;
-          queue[tail++] = n;
-        }
-      }
-    }
-    if (cy > 0) {
-      const n = curr - w;
-      if (!visited[n]) {
-        visited[n] = 1;
-        if (isBgLike(n, hardThresholdSq)) {
-          bgMask[n] = 1;
-          queue[tail++] = n;
-        }
-      }
-    }
-    if (cy + 1 < h) {
-      const n = curr + w;
-      if (!visited[n]) {
-        visited[n] = 1;
-        if (isBgLike(n, hardThresholdSq)) {
-          bgMask[n] = 1;
-          queue[tail++] = n;
-        }
+    const neighbors = [
+      cx > 0 ? curr - 1 : -1,
+      cx + 1 < w ? curr + 1 : -1,
+      cy > 0 ? curr - w : -1,
+      cy + 1 < h ? curr + w : -1,
+    ];
+    for (let k = 0; k < 4; k++) {
+      const n = neighbors[k];
+      if (n < 0 || visited[n]) continue;
+      visited[n] = 1;
+      if (isBgLike(n, hardThresholdSq)) {
+        bgMask[n] = 1;
+        queue[tail++] = n;
       }
     }
   }
@@ -232,11 +248,11 @@ export function getProductCutout(
   }
   const fgRatio = 1 - bgPixels / totalPixels;
 
-  const isComplexBg = bgSeeds.length >= 6;
+  const isComplexBg = bgSeeds.length >= 8;
   if (fgRatio < 0.06 || fgRatio > 0.96) {
     const notice = fgRatio < 0.06
-      ? 'Ảnh nền và chủ thể gần tương đồng; giảm mức tách nền hoặc giữ ảnh gốc để bảo toàn sản phẩm.'
-      : 'Ảnh có hậu cảnh phức tạp hoặc không đồng nhất; hệ thống tự giữ nguyên toàn khung hình nhằm bảo toàn chi tiết sản phẩm.';
+      ? 'Ảnh nền và chủ thể gần tương đồng; giảm độ nhạy hoặc giữ ảnh gốc để bảo toàn sản phẩm.'
+      : 'Ảnh có hậu cảnh phức tạp hoặc không đồng nhất; hệ thống tự giữ nguyên ảnh gốc nhằm bảo toàn chi tiết sản phẩm.';
     const untouched: CutoutResult = {
       canvas: workCanvas,
       cutoutApplied: false,
@@ -249,7 +265,7 @@ export function getProductCutout(
     return untouched;
   }
 
-  // 5. Soft edge matting on foreground pixels adjacent to removed background
+  // 5. Continuous alpha matte + color spill / defringe on boundary pixels
   const alphaMap = new Uint8ClampedArray(totalPixels);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -258,7 +274,6 @@ export function getProductCutout(
         alphaMap[idx] = 0;
         continue;
       }
-      // Check if boundary pixel next to bgMask
       let bgNeighbors = 0;
       for (let dy = -1; dy <= 1; dy++) {
         const ny = y + dy;
@@ -269,19 +284,50 @@ export function getProductCutout(
           if (bgMask[ny * w + nx]) bgNeighbors++;
         }
       }
-      if (bgNeighbors > 0 && isBgLike(idx, softThresholdSq)) {
-        alphaMap[idx] = bgNeighbors >= 5 ? 64 : 150;
-      } else if (bgNeighbors >= 4) {
-        alphaMap[idx] = 205;
+      if (bgNeighbors > 0) {
+        const distSq = minBgDistSq(idx);
+        if (distSq <= softThresholdSq) {
+          const t = Math.max(0, Math.min(1, (Math.sqrt(distSq) - sensitivity * 0.85) / (sensitivity * 0.7)));
+          alphaMap[idx] = Math.round(t * 235);
+        } else {
+          alphaMap[idx] = bgNeighbors >= 5 ? 185 : 235;
+        }
       } else {
         alphaMap[idx] = 255;
       }
     }
   }
 
+  // Optional 1-pass box feather on boundary alpha for smooth anti-aliased edges
+  const finalAlpha = featherRadius > 0 ? new Uint8ClampedArray(alphaMap) : alphaMap;
+  if (featherRadius > 0) {
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const idx = y * w + x;
+        const a = alphaMap[idx];
+        if (a > 0 && a < 255) {
+          const sum =
+            alphaMap[idx - w - 1] + alphaMap[idx - w] + alphaMap[idx - w + 1] +
+            alphaMap[idx - 1] + a * 2 + alphaMap[idx + 1] +
+            alphaMap[idx + w - 1] + alphaMap[idx + w] + alphaMap[idx + w + 1];
+          finalAlpha[idx] = Math.round(sum / 10);
+        }
+      }
+    }
+  }
+
+  // Apply alpha + color spill suppression (defringe) on semi-transparent edge pixels
   for (let i = 0; i < totalPixels; i++) {
-    const a = alphaMap[i];
-    data[i * 4 + 3] = Math.min(data[i * 4 + 3], a);
+    const a = finalAlpha[i];
+    const off = i * 4;
+    if (a > 0 && a < 240 && defringeStrength > 0) {
+      const alphaNorm = Math.max(0.18, a / 255);
+      const blend = (1 - alphaNorm) * defringeStrength;
+      data[off] = Math.max(0, Math.min(255, Math.round((data[off] - avgBgR * blend) / (1 - blend + 0.001))));
+      data[off + 1] = Math.max(0, Math.min(255, Math.round((data[off + 1] - avgBgG * blend) / (1 - blend + 0.001))));
+      data[off + 2] = Math.max(0, Math.min(255, Math.round((data[off + 2] - avgBgB * blend) / (1 - blend + 0.001))));
+    }
+    data[off + 3] = Math.min(data[off + 3], a);
   }
   ctx.putImageData(imgData, 0, 0);
 
@@ -302,7 +348,7 @@ export function getProductCutout(
   }
 
   const complexNotice = isComplexBg
-    ? 'Hậu cảnh ảnh có nhiều vùng màu khác nhau: tách nền theo màu biên chỉ phù hợp nền trơn/sáng. Hãy kiểm tra xem trước hoặc điều chỉnh độ nhạy.'
+    ? 'Hậu cảnh ảnh có nhiều vùng màu khác nhau. Hãy kiểm tra xem trước và điều chỉnh độ nhạy nếu cần.'
     : undefined;
 
   if (maxX > minX + 4 && maxY > minY + 4) {

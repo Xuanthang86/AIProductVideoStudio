@@ -1,0 +1,950 @@
+# PROMPT NÂNG CẤP TOÀN DIỆN WEBSITE AI PRODUCT VIDEO STUDIO – TỐI ƯU GIAO DIỆN MOBILE, TÁCH NỀN AI, BỐ CỤC VIDEO SẢN PHẨM, HỆ THỐNG ÂM THANH VÀ RESPONSIVE TOÀN WEBSITE
+
+## I. THÔNG TIN DỰ ÁN VÀ YÊU CẦU BẮT BUỘC
+
+Repository: https://github.com/Xuanthang86/AIProductVideoStudio
+
+Website: https://aivideo.xuanthang.io.vn
+
+Nhánh làm việc: `main`.
+
+Đây là dự án đang vận hành, đã có tài khoản người dùng, sản phẩm, dữ liệu, dự án video, phân cảnh, thư viện media, hệ thống AI, quản trị và chức năng xuất video.
+
+Tôi yêu cầu bạn trực tiếp nghiên cứu mã nguồn, xác định nguyên nhân và triển khai nâng cấp website theo các nội dung bên dưới.
+
+**NGUYÊN TẮC QUAN TRỌNG NHẤT: TUYỆT ĐỐI KHÔNG LÀM PHÁ VỠ CÁC NỘI DUNG, CHỨC NĂNG, DỮ LIỆU VÀ QUY TRÌNH ĐANG HOẠT ĐỘNG ỔN ĐỊNH.**
+
+Không được chỉ viết báo cáo, đề xuất hoặc hướng dẫn lý thuyết. Phải trực tiếp xử lý mã nguồn, kiểm thử và hoàn thiện các chức năng.
+
+### 1. Nguyên tắc bảo toàn hệ thống
+
+Trước khi sửa code:
+
+1. Đọc trạng thái mới nhất của nhánh `main`, không sử dụng bản code cũ.
+2. Kiểm tra commit mới nhất, toàn bộ cấu trúc thư mục, các thành phần frontend, backend/Cloudflare Worker, D1, ImageKit, API, migration, cấu hình và workflow GitHub Actions.
+3. Đọc kỹ các file liên quan trực tiếp đến chức năng cần sửa, đồng thời kiểm tra những module có quan hệ phụ thuộc.
+4. Kiểm tra `git status`, bảo đảm không ghi đè các thay đổi chưa được lưu.
+5. Xác định các chức năng đang hoạt động tốt và lập danh sách kiểm tra hồi quy trước khi thay đổi.
+6. Không tạo nhánh mới. Chỉ làm việc trên `main`.
+7. Không sử dụng force push, không xóa dữ liệu, không reset hoặc ghi đè toàn bộ mã nguồn.
+8. Không thay thế toàn bộ một component lớn chỉ để bổ sung một vài chức năng nhỏ.
+9. Không tự ý thay đổi kiến trúc, framework, database ID, các biến môi trường hoặc hệ thống xác thực.
+10. Mọi thay đổi phải có phạm vi rõ ràng, tương thích với dữ liệu và code hiện tại.
+
+Nếu phát hiện một chức năng đã có nhưng chưa hoàn chỉnh, hãy ưu tiên sửa và mở rộng chức năng đó thay vì tạo thêm một chức năng trùng lặp.
+
+## II. ĐỊNH HƯỚNG NÂNG CẤP TỔNG THỂ
+
+Nâng cấp AI Product Video Studio theo định hướng một công cụ tạo video quảng cáo sản phẩm chuyên nghiệp, dễ sử dụng, ưu tiên trải nghiệm mobile và có thể sử dụng trên laptop, PC, tablet.
+
+Website cần đáp ứng quy trình:
+
+- Người dùng chọn hoặc tải lên sản phẩm.
+- Hệ thống phân tích hình ảnh và thông tin sản phẩm.
+- AI đề xuất kịch bản và phân cảnh.
+- Người dùng xem, chỉnh sửa và duyệt nội dung.
+- Người dùng lựa chọn cách trình bày hình ảnh sản phẩm, nền, chuyển động và chữ giới thiệu.
+- Người dùng lựa chọn nhạc nền, âm thanh, hiệu ứng âm thanh và giọng đọc.
+- Hệ thống dựng video có hình ảnh và âm thanh đồng bộ.
+- Người dùng xem trước, chỉnh sửa từng phân cảnh, duyệt kết quả.
+- Hệ thống ghép và xuất video MP4 hoàn chỉnh.
+- Người dùng tải video về thiết bị và quản lý video đã tạo.
+
+Giao diện cần hiện đại, chuyên nghiệp, trực quan, dễ thao tác, không quá nhiều trường nhập liệu cùng lúc và không tạo cảm giác rối mắt.
+
+Không sao chép giao diện của bất kỳ nền tảng nào. Chỉ tham khảo những nguyên tắc trải nghiệm và tính năng phù hợp từ CapCut, Canva, TikTok, Instagram Reels và các công cụ dựng video chuyên nghiệp.
+
+## III. NÂNG CẤP GIAO DIỆN PHÂN CẢNH TRÊN MOBILE
+
+Hiện tại, khi thu gọn phân cảnh trên mobile, cách trình bày chưa đẹp, thiếu cân đối và chưa thuận tiện khi người dùng có nhiều phân cảnh.
+
+Yêu cầu thiết kế lại hoàn chỉnh khu vực này.
+
+### 1. Thiết kế thẻ phân cảnh khi thu gọn
+
+Mỗi phân cảnh khi thu gọn phải hiển thị dưới dạng một thẻ gọn, đẹp, chuyên nghiệp, có đầy đủ thông tin nhận diện cần thiết:
+
+- Số thứ tự phân cảnh.
+- Ảnh thumbnail của phân cảnh.
+- Tên hoặc vai trò phân cảnh.
+- Thời lượng.
+- Trạng thái xử lý hoặc duyệt.
+- Biểu tượng mở rộng/thu gọn.
+
+Không hiển thị toàn bộ các trường chỉnh sửa khi phân cảnh đang thu gọn.
+
+Bố cục cần được tổ chức theo chiều ngang hợp lý, hạn chế chiều cao của mỗi thẻ, không để các thành phần chồng lấn hoặc tràn khỏi màn hình.
+
+### 2. Trạng thái mở rộng
+
+- Khi nhấn vào một phân cảnh, chỉ phân cảnh đó được mở.
+- Các phân cảnh khác tự động thu gọn.
+- Khi thu gọn, không làm mất dữ liệu người dùng đang chỉnh sửa.
+- Không tự động khởi tạo lại dữ liệu hoặc reset cấu hình.
+- Không làm mất trạng thái duyệt, ảnh, lời thoại, chữ, chuyển động, nền hoặc các thông số đã lưu.
+
+### 3. Trải nghiệm thao tác
+
+- Nút mở rộng/thu gọn phải dễ bấm trên màn hình cảm ứng.
+- Khu vực thao tác tối thiểu khoảng 44px.
+- Có trạng thái hover/focus phù hợp trên desktop và trạng thái chạm rõ ràng trên mobile.
+- Không sử dụng hiệu ứng chuyển động quá mạnh.
+- Không làm danh sách phân cảnh nhảy vị trí bất thường khi mở/đóng.
+- Khi mở phân cảnh, giao diện nên cuộn hợp lý để người dùng nhìn thấy nội dung đang thao tác.
+
+### 4. Đồng bộ các thiết bị
+
+Cùng một hệ thống phân cảnh phải hoạt động nhất quán trên:
+
+- Điện thoại.
+- Tablet.
+- Laptop.
+- PC.
+
+Desktop có thể tận dụng không gian rộng hơn nhưng không được hiển thị quá nhiều trường gây rối mắt.
+
+## IV. NÂNG CẤP TOÀN DIỆN CHỨC NĂNG TÁCH NỀN SẢN PHẨM
+
+Đây là một trong những chức năng cần ưu tiên xử lý.
+
+Hiện tại, chức năng tách nền vẫn còn những chi tiết thừa, viền không sạch, có thể giữ lại bóng/nền cũ hoặc làm mất một số chi tiết của sản phẩm.
+
+Cần nghiên cứu và thay đổi phương pháp xử lý để đạt chất lượng tốt hơn.
+
+### 1. Đánh giá lại phương pháp hiện tại
+
+Kiểm tra toàn bộ `src/lib/backgroundRemoval.ts` và các nơi sử dụng `getProductCutout()` trong Studio và bộ dựng video.
+
+Phương pháp lấy mẫu màu ở viền ảnh kết hợp flood-fill hiện tại chỉ phù hợp với một số nền đơn giản. Không được tiếp tục coi đây là giải pháp tách nền chính cho tất cả hình ảnh.
+
+Cần xử lý được các trường hợp:
+
+- Sản phẩm đặt trên nền trắng.
+- Sản phẩm đặt trên nền nhiều màu.
+- Sản phẩm có bóng đổ.
+- Sản phẩm có các chi tiết nhỏ, đường viền mảnh.
+- Sản phẩm trong suốt hoặc bán trong suốt.
+- Sản phẩm có màu gần giống màu nền.
+- Sản phẩm có logo, chữ, hoa văn và chi tiết phản chiếu.
+- Sản phẩm có nhiều bộ phận nhỏ hoặc hình dạng phức tạp.
+
+### 2. Nghiên cứu và tích hợp mô hình AI tách nền
+
+Ưu tiên nghiên cứu giải pháp phân đoạn chủ thể bằng AI chạy trực tiếp trên trình duyệt.
+
+Có thể nghiên cứu:
+
+- BiRefNet.
+- BiRefNet Lite.
+- Các mô hình segmentation/matting tương đương.
+- ONNX Runtime Web.
+- WebGPU và WebAssembly.
+- Các thư viện mã nguồn mở phù hợp với sản phẩm thương mại.
+
+Tham khảo BG0 và `@bg0/browser`, nhưng phải kiểm tra kỹ API, khả năng tương thích, kích thước mô hình, hiệu năng, giấy phép mã nguồn và giấy phép trọng số mô hình.
+
+Không tích hợp mô hình có giấy phép không cho phép sử dụng thương mại.
+
+Không đưa ảnh sản phẩm của người dùng lên một dịch vụ AI bên ngoài nếu chưa có sự đồng ý rõ ràng và chưa đánh giá chi phí, quyền riêng tư và điều kiện sử dụng.
+
+### 3. Yêu cầu xử lý chất lượng viền
+
+Sau khi mô hình tạo mặt nạ chủ thể, phải có bước hậu xử lý:
+
+- Làm sạch các điểm nền còn sót.
+- Loại bỏ viền màu nền cũ (color spill/defringe).
+- Xử lý mép sản phẩm mượt, không bị răng cưa.
+- Điều chỉnh độ mềm của alpha.
+- Có thể co/giãn vùng mặt nạ ở mức hợp lý.
+- Bảo toàn các chi tiết nhỏ của sản phẩm.
+- Hạn chế hiện tượng mất logo, chữ, họa tiết hoặc bộ phận sản phẩm.
+- Không tạo quầng trắng/đen quanh sản phẩm.
+- Không làm sản phẩm bị biến dạng hoặc đổi màu.
+
+Không được xử lý bằng cách xóa mạnh toàn bộ vùng màu tương tự vì có thể làm mất chi tiết bên trong sản phẩm.
+
+### 4. Bổ sung công cụ kiểm tra và chỉnh sửa thủ công
+
+Người dùng cần có khả năng:
+
+- Xem ảnh gốc và ảnh đã tách nền.
+- Bật/tắt nền caro trong suốt.
+- Xem trước trên nền trắng, đen và nền màu.
+- Điều chỉnh mức độ xử lý.
+- Làm mềm hoặc thu gọn viền.
+- Xóa thêm phần nền còn sót.
+- Khôi phục phần sản phẩm bị xóa nhầm bằng công cụ Brush Restore.
+- Dùng Brush Erase để xóa vùng thừa.
+- Hoàn tác thao tác.
+- Khôi phục ảnh gốc.
+
+Giao diện điều chỉnh phải dễ sử dụng trên điện thoại.
+
+### 5. Tối ưu hiệu suất
+
+- Chỉ tải mô hình AI khi người dùng sử dụng chức năng tách nền.
+- Có tiến trình tải mô hình và tiến trình xử lý.
+- Có khả năng hủy tác vụ.
+- Tận dụng cache để không xử lý lại cùng một ảnh và cùng cấu hình.
+- Ưu tiên WebGPU khi có hỗ trợ.
+- Có phương án WebAssembly phù hợp khi WebGPU không khả dụng.
+- Tự chọn chế độ xử lý phù hợp với thiết bị.
+- Không để trình duyệt bị treo hoặc tiêu thụ bộ nhớ quá mức.
+- Không xử lý lại ảnh ở từng frame video nếu kết quả tách nền đã được tạo và có thể tái sử dụng.
+- Không bắt buộc tải mô hình dung lượng rất lớn trên mọi thiết bị mobile.
+
+Nếu thiết bị không đủ khả năng xử lý, phải thông báo rõ và cho phép giữ ảnh gốc thay vì tạo kết quả tách nền lỗi.
+
+## V. THIẾT KẾ LẠI BỐ CỤC VIDEO SẢN PHẨM
+
+Đây là yêu cầu quan trọng nhất về chất lượng video đầu ra.
+
+Tôi muốn video tạo ra có phong cách chuyên nghiệp, tập trung vào sản phẩm, phù hợp với TikTok, Instagram Reels, Facebook Reels và các nền tảng video ngắn.
+
+### 1. Nguyên tắc hiển thị trên mỗi khung hình
+
+**Trên một khung hình video, chỉ được hiển thị:**
+
+1. Hình ảnh sản phẩm.
+2. Chữ giới thiệu sản phẩm đã được người dùng duyệt, nếu người dùng chủ động lựa chọn bật hiển thị.
+
+Không tự ý đưa những nội dung sau vào hình ảnh video:
+
+- Tiêu đề dự án.
+- Tên phân cảnh.
+- Tiêu đề mở đầu do AI tạo.
+- Các dòng mô tả không được duyệt.
+- Phụ đề lời thoại tự động.
+- CTA tự động.
+- Các nhãn thông tin quản lý.
+- Những dòng chữ trang trí không cần thiết.
+- Watermark hoặc logo tự sinh mà người dùng không lựa chọn.
+
+Thông tin như tiêu đề dự án, tên phân cảnh và nội dung lời thoại vẫn phải được giữ trong hệ thống quản lý, nhưng không được tự động đưa lên khung hình.
+
+### 2. Cơ chế bật/tắt chữ giới thiệu sản phẩm
+
+- Mặc định không hiển thị chữ nếu người dùng chưa lựa chọn.
+- Mỗi phân cảnh có lựa chọn bật/tắt chữ riêng.
+- Chỉ hiển thị nội dung chữ đã được người dùng duyệt.
+- Không lấy tiêu đề phân cảnh hoặc lời thoại làm chữ hiển thị thay thế.
+- Không tự động sinh thêm chữ mới khi xuất video.
+- Nếu người dùng tắt chữ, khung hình chỉ hiển thị sản phẩm.
+- Nếu người dùng bật chữ, chỉ hiển thị đúng nội dung đã duyệt.
+
+Phải phân biệt rõ giữa lời thoại âm thanh và chữ hiển thị trên màn hình. Người dùng có thể bật giọng đọc nhưng vẫn tắt chữ phụ đề.
+
+### 3. Bố cục sản phẩm
+
+Nghiên cứu cách trình bày sản phẩm trong các video quảng cáo chuyên nghiệp:
+
+- Sản phẩm là chủ thể chính, chiếm vị trí nổi bật.
+- Tỷ lệ sản phẩm hợp lý, không quá nhỏ.
+- Không bị cắt mất các chi tiết quan trọng.
+- Không bị méo hoặc kéo giãn.
+- Không bị che bởi chữ.
+- Không bị đẩy sát mép khung hình.
+- Có khoảng trống phù hợp để hình ảnh dễ nhìn.
+- Ánh sáng và nền hỗ trợ sản phẩm nhưng không lấn át sản phẩm.
+- Không tự sinh thêm vật thể làm thay đổi hình dáng hoặc đặc điểm sản phẩm.
+
+Bố cục phải được tối ưu riêng cho từng tỷ lệ khung hình.
+
+### 4. Tối ưu cho TikTok và Reels
+
+Bổ sung các cấu hình xuất video:
+
+- TikTok/Reels dọc 9:16.
+- Facebook/Instagram Feed 4:5.
+- Video vuông 1:1.
+- Video ngang 16:9.
+
+Đối với video 9:16:
+
+- Ưu tiên độ phân giải 1080 × 1920 khi thiết bị đáp ứng.
+- Sản phẩm phải nằm trong vùng nhìn thấy tốt.
+- Không đặt chữ quan trọng tại vùng giao diện của TikTok/Reels có thể che khuất.
+- Có chế độ bật/tắt lớp mô phỏng vùng an toàn để kiểm tra trước khi xuất.
+- Vùng an toàn phải có cấu hình riêng theo từng nền tảng, không sử dụng một thông số chung cho tất cả.
+
+### 5. Phong cách hình ảnh
+
+Bổ sung các phong cách phù hợp:
+
+- Studio tối giản.
+- Luxury/Premium.
+- Công nghệ hiện đại.
+- Beauty/Cosmetics.
+- Thời trang.
+- Đồ gia dụng.
+- Thực phẩm.
+- Lifestyle.
+- Sản phẩm công nghệ.
+- Trưng bày sản phẩm trên bục.
+
+Các phong cách này chỉ thay đổi bối cảnh, ánh sáng và cách trình bày, không được làm thay đổi hình dáng hoặc đặc điểm thực tế của sản phẩm.
+
+### 6. Chuyển động
+
+Tiếp tục tận dụng bộ dựng video hiện tại, đồng thời nâng cao chất lượng:
+
+- Zoom in/out mượt.
+- Pan trái/phải.
+- Parallax.
+- Chuyển động camera nhẹ.
+- Cận cảnh sản phẩm.
+- Làm nổi bật chi tiết.
+- Chuyển cảnh phù hợp với nhịp âm thanh.
+
+Không sử dụng chuyển động quá mạnh gây rung, méo hoặc làm sản phẩm mất ổn định.
+
+Nếu chỉ có ảnh tĩnh thì phải thể hiện đúng là hiệu ứng chuyển động camera/2.5D, không quảng cáo nhầm thành video AI sinh chuyển động thực sự.
+
+## VI. XÂY DỰNG HỆ THỐNG ÂM THANH HOÀN CHỈNH
+
+Hiện tại, phần xem trước video chưa có âm thanh đồng bộ. Hệ thống âm thanh cũng chưa có thư viện nhạc thực tế và chưa hỗ trợ người dùng tải nhạc riêng.
+
+Cần triển khai thành một hệ thống âm thanh hoàn chỉnh.
+
+### 1. Âm thanh phải xuất hiện khi xem trước video
+
+Đây là yêu cầu bắt buộc.
+
+Khi người dùng nhấn Phát thử:
+
+- Video phải phát hình ảnh.
+- Nhạc nền phải phát đồng bộ.
+- Giọng đọc phải phát đúng thời điểm.
+- Hiệu ứng âm thanh phải phát đúng phân cảnh nếu được cấu hình.
+- Khi tạm dừng video, âm thanh phải dừng theo.
+- Khi tua đến vị trí khác, âm thanh phải phát đúng vị trí tương ứng.
+- Khi chuyển phân cảnh, âm thanh phải tiếp tục chính xác, không bị phát lại từ đầu.
+- Khi kết thúc video, phải dừng toàn bộ âm thanh.
+- Khi phát lại, âm thanh phải bắt đầu đúng vị trí đầu tiên.
+
+Phải sử dụng chung một cấu trúc timeline âm thanh cho xem trước và xuất video, tránh trường hợp xem trước có âm thanh nhưng xuất MP4 lại mất âm thanh hoặc ngược lại.
+
+Không được chỉ thêm một thẻ Audio phát độc lập không đồng bộ với `previewTime`.
+
+### 2. Thư viện âm thanh lựa chọn
+
+Bổ sung một thư viện âm thanh để người dùng lựa chọn theo loại video và phong cách sản phẩm.
+
+Các nhóm đề xuất:
+
+- Nhạc sôi động, trẻ trung.
+- Nhạc hiện đại, bắt trend.
+- Nhạc điện tử/EDM.
+- Nhạc công nghệ.
+- Nhạc sang trọng, cao cấp.
+- Nhạc nhẹ nhàng.
+- Nhạc acoustic.
+- Nhạc chill/lofi.
+- Nhạc thời trang.
+- Nhạc mỹ phẩm/làm đẹp.
+- Nhạc lifestyle.
+- Nhạc review/unboxing.
+- Nhạc quảng cáo bán hàng.
+- Hiệu ứng âm thanh chuyển cảnh.
+- Whoosh, pop, click, sparkle, impact và các hiệu ứng khác.
+
+Mỗi âm thanh cần có:
+
+- Tên.
+- Thể loại.
+- Phong cách.
+- Thời lượng.
+- Mô tả.
+- Nguồn cung cấp.
+- Quyền sử dụng.
+- Phạm vi nền tảng được phép sử dụng.
+- Quốc gia/khu vực được cấp phép nếu có.
+- Nút nghe thử.
+- Nút lựa chọn và áp dụng.
+
+### 3. Âm thanh thịnh hành trên mạng xã hội
+
+Tôi muốn có các lựa chọn âm thanh theo xu hướng trên TikTok, Instagram Reels và các nền tảng khác.
+
+Tuy nhiên, phải triển khai đúng quy định bản quyền:
+
+- Không tự động tải nhạc từ TikTok, Instagram hoặc các nền tảng khác.
+- Không tự ý lấy nhạc bản quyền để đưa vào thư viện website.
+- Không coi một bài nhạc đang thịnh hành là được phép sử dụng thương mại.
+- Không sử dụng API hoặc phương thức scrape trái phép.
+- Không phân phối lại âm thanh nếu giấy phép không cho phép.
+
+Giải pháp:
+
+1. Ưu tiên thư viện nhạc và hiệu ứng âm thanh có giấy phép thương mại phù hợp.
+2. Có thể xây dựng danh mục âm thanh theo phong cách thịnh hành, sử dụng các bản nhạc được cấp phép hoặc nhạc tự sản xuất.
+3. Bổ sung liên kết đến TikTok Commercial Music Library và Meta Sound Collection để người dùng tham khảo và lựa chọn âm thanh phù hợp khi đăng lên nền tảng tương ứng.
+4. Mỗi âm thanh phải có thông tin về quyền sử dụng, nền tảng được phép sử dụng và phạm vi giấy phép.
+5. Không mặc định một âm thanh được cấp phép trên TikTok cũng được phép dùng trên Instagram hoặc YouTube.
+
+Đối với nhạc chỉ được phép sử dụng trong một nền tảng, phải hiển thị cảnh báo rõ ràng trước khi người dùng xuất hoặc sử dụng video trên nền tảng khác.
+
+### 4. Người dùng tải file âm thanh từ thiết bị
+
+Bổ sung chức năng tải âm thanh riêng.
+
+Cho phép chọn tệp từ:
+
+- Điện thoại.
+- Máy tính.
+- Tablet.
+
+Ưu tiên hỗ trợ các định dạng phổ biến:
+
+- MP3.
+- WAV.
+- M4A.
+- AAC.
+- OGG.
+- Các định dạng khác nếu trình duyệt hỗ trợ giải mã.
+
+Sau khi tải lên:
+
+- Hiển thị tên tệp.
+- Hiển thị thời lượng.
+- Có trình phát nghe thử.
+- Có thanh điều chỉnh âm lượng.
+- Có khả năng cắt đoạn âm thanh.
+- Chọn thời điểm bắt đầu phát.
+- Chọn điểm kết thúc.
+- Lặp âm thanh khi cần.
+- Fade in.
+- Fade out.
+- Xóa hoặc thay thế âm thanh.
+- Lưu cấu hình vào dự án.
+
+Nếu người dùng muốn sử dụng âm thanh trong các lần chỉnh sửa tiếp theo, phải bảo đảm tệp âm thanh được lưu trữ an toàn và liên kết đúng với dự án.
+
+### 5. Tải video có âm thanh và tự động tách âm thanh
+
+Bổ sung lựa chọn:
+
+**Tải video từ thiết bị để tách âm thanh.**
+
+Quy trình:
+
+1. Người dùng chọn video từ điện thoại hoặc máy tính.
+2. Hệ thống kiểm tra định dạng và khả năng đọc tệp.
+3. Tự động phát hiện và tách track âm thanh.
+4. Chuyển thành một tệp âm thanh độc lập nếu trình duyệt hỗ trợ.
+5. Cho phép nghe thử.
+6. Cho phép cắt, chỉnh âm lượng, chọn đoạn và lưu.
+7. Người dùng có thể dùng phần âm thanh vừa tách làm nhạc nền cho dự án video sản phẩm.
+
+Phải phân biệt rõ âm thanh của video nguồn với hình ảnh video nguồn.
+
+Nếu người dùng chỉ muốn lấy âm thanh, không được tự động đưa hình ảnh video nguồn vào video sản phẩm.
+
+Ưu tiên xử lý trên thiết bị người dùng để tránh chi phí máy chủ.
+
+Cần có phương án tương thích cho Chrome, Safari, Android và iOS. Nếu trình duyệt không hỗ trợ giải mã hoặc trích xuất định dạng cụ thể, phải thông báo rõ, không tạo ra file âm thanh rỗng.
+
+### 6. Điều chỉnh âm thanh
+
+Bổ sung các thông số:
+
+- Âm lượng nhạc nền.
+- Âm lượng giọng đọc.
+- Âm lượng hiệu ứng.
+- Thời điểm bắt đầu.
+- Thời điểm kết thúc.
+- Cắt đầu/cuối.
+- Fade in/out.
+- Lặp nhạc.
+- Tắt tiếng.
+- Tự giảm âm lượng nhạc khi có giọng đọc (audio ducking).
+- Cân bằng âm lượng để giọng đọc không bị nhạc lấn át.
+
+Có thể bổ sung dạng waveform để người dùng nhìn thấy đoạn âm thanh và dễ thao tác.
+
+### 7. Âm thanh theo từng phân cảnh
+
+Cho phép cấu hình âm thanh phù hợp với từng phân cảnh:
+
+- Nhạc nền toàn video.
+- Hiệu ứng âm thanh riêng cho phân cảnh.
+- Lời thoại/giọng đọc riêng cho phân cảnh.
+- Điều chỉnh âm lượng riêng.
+- Điều chỉnh thời điểm phát.
+
+Không bắt buộc mọi phân cảnh phải có hiệu ứng âm thanh.
+
+### 8. Bảo đảm âm thanh trong file MP4 xuất ra
+
+Đây là tiêu chí bắt buộc.
+
+Phải kiểm tra cả hai đường dựng video hiện tại:
+
+- WebCodecs + MP4 muxer.
+- MediaRecorder fallback.
+
+Đảm bảo:
+
+- Nhạc nền được ghép vào MP4.
+- Giọng đọc được ghép vào MP4.
+- Hiệu ứng âm thanh được ghép đúng thời điểm.
+- Âm thanh không bị mất khi chuyển sang chế độ fallback.
+- Không bị lệch tiếng và hình.
+- Không bị nhân đôi track âm thanh.
+- Không bị clipping hoặc méo tiếng.
+- Âm thanh có thời lượng phù hợp với video.
+- Video xuất ra có thể phát âm thanh trên các trình phát phổ biến.
+
+Không được xóa hoặc làm hỏng chức năng TTS Gemini hiện tại.
+
+## VII. NÂNG CẤP GIAO DIỆN TOÀN WEBSITE
+
+Kiểm tra toàn bộ website trên laptop, PC, tablet và mobile.
+
+Không chỉ kiểm tra trang Studio.
+
+Các trang cần rà soát:
+
+1. Trang chủ.
+2. Đăng nhập.
+3. Đăng ký.
+4. Quản lý sản phẩm.
+5. Thư viện sản phẩm.
+6. Trang mẫu video.
+7. Studio.
+8. Video và dự án của tôi.
+9. Hồ sơ cá nhân.
+10. Trang quản trị.
+11. Các hộp thoại, popover, menu, thông báo và thành phần dùng chung.
+
+### 1. Các kích thước cần kiểm tra
+
+- Mobile nhỏ: 320px.
+- Mobile: 360px.
+- Mobile: 375px.
+- Mobile: 390px.
+- Mobile lớn: 430px.
+- Tablet: 768px.
+- Tablet ngang: 1024px.
+- Laptop: 1280px.
+- Laptop/PC: 1366px.
+- Desktop: 1440px.
+- Màn hình lớn: 1920px.
+
+Kiểm tra cả chiều ngang và chiều dọc trên mobile/tablet.
+
+### 2. Các lỗi cần xử lý
+
+- Tràn nội dung theo chiều ngang.
+- Nút bấm quá nhỏ.
+- Chữ quá nhỏ hoặc quá lớn.
+- Các trường nhập liệu chồng lên nhau.
+- Các thẻ nội dung không cân đối.
+- Ảnh bị méo hoặc bị cắt.
+- Các hộp thoại vượt khỏi màn hình.
+- Menu khó thao tác.
+- Khu vực xem trước video quá nhỏ hoặc quá lớn.
+- Thanh công cụ không phù hợp với màn hình.
+- Các nút hành động bị đẩy ra ngoài vùng nhìn thấy.
+- Khoảng cách giữa các thành phần không thống nhất.
+- Nội dung bị che khi bàn phím mobile xuất hiện.
+
+### 3. Yêu cầu thiết kế
+
+- Giao diện hiện đại, tối giản và chuyên nghiệp.
+- Phân cấp nội dung rõ ràng.
+- Màu sắc thống nhất.
+- Nút chính và nút phụ có phân biệt.
+- Hạn chế quá nhiều đường viền và khối màu.
+- Không làm giao diện trở nên rối mắt.
+- Các trường nhập liệu có chiều rộng hợp lý.
+- Các khu vực có thể cuộn phải hoạt động đúng.
+- Không để người dùng phải cuộn ngang trên mobile.
+- Các thao tác thường dùng phải dễ tiếp cận.
+
+Không thay đổi nhận diện thương hiệu và cấu trúc điều hướng hiện có nếu không có lý do cần thiết.
+
+## VIII. BỔ SUNG CÁC CHỨC NĂNG CẦN THIẾT ĐỂ WEBSITE HOÀN THIỆN HƠN
+
+Nghiên cứu thêm các công cụ tạo video sản phẩm và trình chỉnh sửa video trực tuyến để đề xuất, lựa chọn những chức năng thực sự cần thiết.
+
+Không chạy theo việc thêm thật nhiều tính năng khiến hệ thống nặng và phức tạp.
+
+Ưu tiên các chức năng sau:
+
+### 1. Timeline trực quan
+
+Bổ sung hoặc nâng cấp timeline để người dùng có thể nhìn thấy:
+
+- Các phân cảnh.
+- Thời lượng từng phân cảnh.
+- Nhạc nền.
+- Giọng đọc.
+- Hiệu ứng âm thanh.
+- Thời điểm xuất hiện chữ đã duyệt.
+
+Timeline phải đồng bộ với phần xem trước.
+
+### 2. Preset video theo nền tảng
+
+Bổ sung các cấu hình sẵn:
+
+- TikTok.
+- Instagram Reels.
+- Facebook Reels.
+- YouTube Shorts.
+- Video quảng cáo ngang.
+- Video sản phẩm vuông.
+- Video giới thiệu sản phẩm cho website.
+
+Mỗi preset có tỷ lệ, độ phân giải và vùng an toàn tương ứng.
+
+### 3. Kiểm tra trước khi xuất
+
+Bổ sung bảng kiểm tra:
+
+- Có đủ ảnh phân cảnh.
+- Các phân cảnh đã được duyệt.
+- Có âm thanh nếu người dùng lựa chọn.
+- Không có chữ chưa được duyệt.
+- Không có nội dung bị tràn khung hình.
+- Tỷ lệ video đúng cấu hình.
+- Thời lượng hợp lệ.
+- Tệp đầu ra có thể xuất.
+
+Nếu thiếu điều kiện quan trọng, phải thông báo cụ thể.
+
+### 4. Tạo ảnh bìa video
+
+Cho phép người dùng:
+
+- Chọn một frame làm ảnh bìa.
+- Chọn ảnh sản phẩm.
+- Điều chỉnh vị trí ảnh.
+- Xuất ảnh bìa theo tỷ lệ phù hợp.
+
+Không tự động đưa tiêu đề dự án vào ảnh bìa nếu người dùng chưa lựa chọn.
+
+### 5. Tối ưu quy trình sử dụng
+
+Đơn giản hóa các bước thao tác:
+
+- Nhìn rõ bước đang thực hiện.
+- Có trạng thái đã hoàn thành.
+- Có trạng thái đang xử lý.
+- Có cảnh báo khi cần người dùng xác nhận.
+- Có khả năng tiếp tục dự án đang làm.
+- Hạn chế yêu cầu nhập lại thông tin.
+- Không mất dữ liệu khi chuyển giữa các bước.
+
+## IX. YÊU CẦU KỸ THUẬT VÀ BẢO TOÀN HẠ TẦNG HIỆN TẠI
+
+### 1. Giữ nguyên kiến trúc
+
+Tiếp tục sử dụng:
+
+- React + TypeScript.
+- Cloudflare Workers.
+- Cloudflare D1.
+- ImageKit.
+- Gemini API theo chính sách hiện tại.
+- Bộ dựng video chạy trên trình duyệt.
+
+Không tự ý chuyển sang nền tảng khác.
+
+### 2. Chính sách chi phí
+
+Đây là website được định hướng vận hành ưu tiên miễn phí.
+
+Bắt buộc giữ các nguyên tắc:
+
+- Không tự kích hoạt fal.ai.
+- Không tự gọi API tạo video trả phí.
+- Không tự bật ComfyUI hoặc nhà cung cấp tính phí.
+- Không tự nâng cấp gói Cloudflare.
+- Không tự nâng cấp ImageKit.
+- Không chuyển Gemini sang model có billing khi hết quota.
+- Không tự thêm dịch vụ trả phí.
+- Không phát sinh chi phí ngoài ý muốn.
+
+Nếu cần sử dụng một dịch vụ có khả năng tính phí, phải trình bày rõ chi phí và chờ sự đồng ý trước khi triển khai.
+
+Ưu tiên giải pháp xử lý trực tiếp trên trình duyệt.
+
+### 3. ImageKit
+
+Tiếp tục sử dụng ImageKit cho việc lưu trữ media.
+
+Nếu bổ sung upload âm thanh:
+
+- Phải xác thực người dùng.
+- Kiểm tra định dạng MIME và phần mở rộng.
+- Kiểm tra dung lượng.
+- Kiểm tra quyền sở hữu.
+- Có tên tệp an toàn.
+- Lưu đúng thư mục.
+- Có khả năng xóa hoặc thay thế.
+- Không làm lộ thông tin xác thực ImageKit.
+- Không lưu file âm thanh lớn dưới dạng Base64 trong D1.
+
+Không chuyển sang Cloudflare R2.
+
+### 4. D1
+
+Ưu tiên tận dụng cấu trúc hiện có, đặc biệt `music_config_json` trong bảng dự án.
+
+Nếu cần thêm bảng hoặc cột:
+
+- Chỉ tạo migration mới.
+- Không sửa hoặc xóa migration cũ đã áp dụng.
+- Không xóa dữ liệu production.
+- Không thay đổi database ID.
+- Phải bảo đảm tương thích dữ liệu cũ.
+- Phải kiểm tra migration trước khi áp dụng.
+- Có phương án khôi phục nếu migration phát sinh lỗi.
+
+### 5. Bảo mật
+
+- Không đưa API key ra frontend.
+- Không ghi secret vào GitHub.
+- Không để người dùng truy cập media của tài khoản khác.
+- Không cho phép truy cập tệp tùy ý thông qua URL.
+- Xác thực quyền sở hữu dự án trước khi upload, tải hoặc xóa media.
+- Kiểm tra file upload thực tế, không chỉ dựa vào tên file.
+- Giới hạn dung lượng và loại tệp.
+- Xử lý lỗi an toàn.
+
+## X. QUY TRÌNH THỰC HIỆN
+
+Không triển khai tùy tiện tất cả thay đổi cùng một lúc.
+
+Hãy chia thành các giai đoạn:
+
+### Giai đoạn 1: Kiểm tra và lập phương án
+
+- Kiểm tra toàn bộ code hiện tại.
+- Xác định các module liên quan.
+- Đánh giá các chức năng đang hoạt động tốt.
+- Xác định nguyên nhân lỗi.
+- Đề xuất kiến trúc bổ sung.
+- Xác định các file sẽ thay đổi.
+- Xác định có cần migration hay không.
+- Đánh giá ảnh hưởng tới dữ liệu và các chức năng khác.
+
+### Giai đoạn 2: Nâng cấp giao diện phân cảnh
+
+- Thiết kế lại thẻ thu gọn trên mobile.
+- Cải thiện bố cục desktop/tablet.
+- Kiểm tra việc mở/đóng và bảo toàn trạng thái chỉnh sửa.
+
+### Giai đoạn 3: Nâng cấp tách nền
+
+- Nghiên cứu mô hình phù hợp.
+- Triển khai thử nghiệm.
+- Đánh giá chất lượng trên nhiều ảnh sản phẩm.
+- Hoàn thiện xử lý alpha và viền.
+- Bổ sung công cụ chỉnh sửa thủ công.
+- Tích hợp vào Studio và bộ dựng video.
+
+### Giai đoạn 4: Nâng cấp bố cục video
+
+- Thiết lập nguyên tắc sản phẩm là chủ thể chính.
+- Chỉ cho phép chữ giới thiệu đã duyệt.
+- Loại bỏ các dòng chữ không được lựa chọn.
+- Hoàn thiện bố cục theo tỷ lệ.
+- Bổ sung vùng an toàn theo nền tảng.
+
+### Giai đoạn 5: Xây dựng hệ thống âm thanh
+
+- Xây dựng Audio Engine dùng chung.
+- Hỗ trợ thư viện âm thanh.
+- Hỗ trợ tải âm thanh.
+- Hỗ trợ trích xuất âm thanh từ video.
+- Hỗ trợ cắt và điều chỉnh âm thanh.
+- Đồng bộ âm thanh khi xem trước.
+- Đồng bộ âm thanh khi xuất MP4.
+- Kiểm tra cả WebCodecs và MediaRecorder.
+
+### Giai đoạn 6: Responsive toàn website
+
+- Rà soát toàn bộ trang.
+- Điều chỉnh theo các kích thước màn hình.
+- Kiểm tra thao tác thực tế trên mobile/tablet.
+- Sửa lỗi giao diện và tương tác.
+
+### Giai đoạn 7: Kiểm thử tổng thể
+
+Kiểm thử các chức năng hiện có và chức năng mới.
+
+Không được chỉ kiểm tra việc website mở được hoặc build thành công.
+
+## XI. CÁC TRƯỜNG HỢP KIỂM THỬ BẮT BUỘC
+
+### 1. Phân cảnh
+
+- Dự án có 1 phân cảnh.
+- Dự án có 3 phân cảnh.
+- Dự án có 6 phân cảnh.
+- Dự án có nhiều phân cảnh.
+- Mở một phân cảnh và chuyển sang phân cảnh khác.
+- Chỉnh sửa nội dung rồi thu gọn.
+- Tải lại dự án và kiểm tra dữ liệu.
+
+### 2. Tách nền
+
+Thử nghiệm nhiều loại ảnh:
+
+- Sản phẩm nền trắng.
+- Sản phẩm nền đen.
+- Sản phẩm nền nhiều màu.
+- Sản phẩm có bóng.
+- Sản phẩm có chi tiết nhỏ.
+- Sản phẩm trong suốt.
+- Sản phẩm có logo và chữ.
+- Sản phẩm có màu gần giống nền.
+
+Đánh giá ảnh trước và sau tách nền.
+
+Không chấp nhận kết quả chỉ xóa được nền nhưng làm mất chi tiết sản phẩm hoặc để lại viền thừa rõ rệt.
+
+### 3. Khung hình video
+
+- Video 9:16.
+- Video 4:5.
+- Video 1:1.
+- Video 16:9.
+- Bật chữ giới thiệu.
+- Tắt chữ giới thiệu.
+- Có lời thoại nhưng không hiển thị phụ đề.
+- Không có lời thoại.
+- Có CTA trong dữ liệu dự án nhưng không tự đưa CTA lên hình.
+- Kiểm tra sản phẩm không bị méo, cắt hoặc che khuất.
+
+### 4. Âm thanh
+
+- Phát video có nhạc nền.
+- Phát video có giọng đọc.
+- Phát video có cả nhạc và giọng đọc.
+- Tạm dừng.
+- Phát lại.
+- Tua tới giữa video.
+- Chuyển phân cảnh.
+- Tắt/bật âm thanh.
+- Thay đổi âm lượng.
+- Tải file MP3.
+- Tải file WAV.
+- Tải video có âm thanh và tách âm thanh.
+- Cắt đoạn âm thanh.
+- Lưu dự án, tải lại và kiểm tra âm thanh vẫn tồn tại.
+- Xuất MP4 và kiểm tra có âm thanh thực tế.
+- Kiểm tra âm thanh trên cả hai đường dựng video.
+
+### 5. Thiết bị
+
+Kiểm thử trên:
+
+- Chrome desktop.
+- Edge.
+- Safari trên iPhone.
+- Chrome trên Android.
+- Tablet.
+- Màn hình laptop/PC.
+
+Đặc biệt kiểm tra tải video, phát video và phát âm thanh trên Safari iOS.
+
+### 6. Chức năng hiện có cần kiểm tra hồi quy
+
+- Đăng ký.
+- Đăng nhập.
+- Duy trì phiên đăng nhập.
+- Phân quyền.
+- Quản lý sản phẩm.
+- Tải ảnh sản phẩm.
+- Phân tích sản phẩm.
+- Tạo kịch bản.
+- Chọn phương án kịch bản.
+- Chỉnh sửa phân cảnh.
+- Lưu dự án.
+- Tải lại dự án.
+- Duyệt phân cảnh.
+- Dựng từng phân cảnh.
+- Ghép video hoàn chỉnh.
+- Tải MP4.
+- Quản lý video đã tạo.
+- Trang quản trị.
+- Các API hiện có.
+- Dữ liệu D1.
+- Lưu trữ ImageKit.
+
+## XII. TIÊU CHÍ NGHIỆM THU
+
+Chỉ được xem là hoàn thành khi đáp ứng các yêu cầu:
+
+1. Giao diện phân cảnh trên mobile đẹp, gọn, dễ thao tác.
+2. Tách nền tốt hơn rõ rệt, hạn chế chi tiết thừa và không làm mất sản phẩm.
+3. Khung hình video tập trung vào sản phẩm, không tự sinh các dòng chữ không được phép.
+4. Chữ giới thiệu chỉ xuất hiện khi người dùng bật và duyệt.
+5. Xem trước video có âm thanh đồng bộ.
+6. Có thư viện âm thanh hợp pháp và khả năng nghe thử.
+7. Có thể tải âm thanh từ thiết bị.
+8. Có thể tải video và trích xuất âm thanh.
+9. Có thể điều chỉnh âm lượng, thời gian, điểm cắt và hiệu ứng âm thanh.
+10. File MP4 xuất ra có âm thanh đầy đủ, không bị lệch hình/tiếng.
+11. Website hiển thị tốt trên laptop, PC, tablet và mobile.
+12. Không có lỗi TypeScript.
+13. Build thành công.
+14. Không có lỗi nghiêm trọng trong các luồng API.
+15. Dữ liệu tài khoản, sản phẩm, dự án, phân cảnh và video cũ được bảo toàn.
+16. Không phát sinh dịch vụ trả phí ngoài ý muốn.
+
+## XIII. QUY ĐỊNH VỀ GIT VÀ TRIỂN KHAI
+
+Sau khi hoàn thành:
+
+1. Kiểm tra lại toàn bộ thay đổi.
+2. Kiểm tra không có secret hoặc dữ liệu nhạy cảm trong code.
+3. Chạy `npm ci`.
+4. Chạy `npm run typecheck`.
+5. Chạy `npm run build`.
+6. Chạy các bài kiểm thử phù hợp.
+7. Kiểm tra migration nếu có.
+8. Chỉ sử dụng nhánh `main`.
+9. Không force push.
+10. Không tự ý xóa hoặc ghi đè dữ liệu production.
+
+Nếu các kiểm tra đều thành công và được phép triển khai, thực hiện commit/push theo quy trình an toàn trên `main`, sau đó theo dõi GitHub Actions và trạng thái Cloudflare deployment.
+
+Không được thông báo hoàn thành chỉ vì GitHub báo build thành công. Phải kiểm tra chức năng thực tế trên website.
+
+## XIV. BÁO CÁO KẾT QUẢ
+
+Sau khi hoàn thành, báo cáo rõ:
+
+1. Những vấn đề đã phát hiện.
+2. Nguyên nhân kỹ thuật của từng vấn đề.
+3. Những chức năng đã bổ sung.
+4. Những chức năng đã sửa.
+5. Những file đã thay đổi.
+6. Có hay không có migration D1.
+7. Các bài kiểm thử đã thực hiện.
+8. Kết quả typecheck và build.
+9. Kết quả GitHub Actions.
+10. Kết quả Cloudflare deployment.
+11. Những chức năng đã kiểm tra thực tế trên thiết bị.
+12. Những nội dung còn hạn chế hoặc cần kiểm thử thêm.
+
+Không được báo cáo những nội dung chưa thực sự triển khai hoặc chưa kiểm tra.
+
+---
+
+# YÊU CẦU CUỐI CÙNG
+
+Tôi không cần một website có thật nhiều nút chức năng nhưng hoạt động không ổn định.
+
+Tôi cần một website tạo video sản phẩm chuyên nghiệp, dễ sử dụng, hình ảnh đẹp, sản phẩm được thể hiện rõ, âm thanh đầy đủ, có thể sử dụng trên nhiều thiết bị và đặc biệt là bảo toàn toàn bộ các chức năng đang hoạt động tốt.
+
+**Hãy ưu tiên chất lượng video đầu ra, trải nghiệm người dùng và tính ổn định của hệ thống.**
+
+**Không được sửa một chức năng bằng cách làm hỏng chức năng khác. Không được xóa dữ liệu hoặc thay đổi những nội dung đang hoạt động ổn định nếu không thực sự cần thiết.**
+
+Hãy trực tiếp triển khai, kiểm thử và hoàn thiện theo các yêu cầu trên.

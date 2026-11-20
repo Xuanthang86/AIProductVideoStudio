@@ -495,40 +495,42 @@ export function drawSceneFrame(
   const headlinePosition = textCfg.position || 'bottom';
   const headlineColor = /^#[0-9a-fA-F]{6}$/.test(textCfg.color || '') ? String(textCfg.color) : isLightBg ? '#101d36' : '#ffffff';
 
-  // Determine layout zones based on aspect ratio so product & text NEVER overlap
-  const hasHeadline = !scene.renderedClip && scene.showOnScreenText !== false && Boolean(scene.onScreenText?.trim()) && withinTextWindow;
-  const hasSubtitle = !scene.renderedClip && showSubtitles && Boolean(scene.narration?.trim());
-  const hasCta = sceneIndex === totalScenes - 1 && Boolean(ctaText?.trim()) && rawT > 0.25;
+  // Product-first frame policy: ONLY render user-approved on-screen text when explicitly enabled.
+  // Never auto-burn project title, scene title, narration subtitles, CTA, or management labels.
+  const hasHeadline = !scene.renderedClip && scene.showOnScreenText === true && Boolean(scene.onScreenText?.trim()) && withinTextWindow;
+  void showSubtitles;
+  void ctaText;
+  void productName;
 
-  // Stage box coordinates
+  // Stage box coordinates: generous hero framing for the product
   let stageCx = width * 0.5;
-  let stageCy = height * 0.42;
-  let stageW = width * 0.78;
-  let stageH = height * 0.48;
+  let stageCy = hasHeadline ? height * 0.44 : height * 0.5;
+  let stageW = width * 0.84;
+  let stageH = hasHeadline ? height * 0.62 : height * 0.74;
 
   if (scene.renderedClip) {
     stageCx = width * 0.5;
     stageCy = height * 0.5;
     stageW = width;
     stageH = height;
-  } else if (isLandscape && (hasHeadline || hasSubtitle || hasCta)) {
-    // 16:9 Split Stage: product showcased cleanly on left 52%, text & CTA on right 42%
-    stageCx = width * 0.3;
-    stageCy = height * 0.52;
-    stageW = width * 0.46;
-    stageH = height * 0.68;
+  } else if (isLandscape && hasHeadline) {
+    // 16:9 Split Stage: product showcased cleanly on left, approved text on right
+    stageCx = width * 0.32;
+    stageCy = height * 0.5;
+    stageW = width * 0.52;
+    stageH = height * 0.78;
   } else if (isCompactPortrait) {
-    // 9:16 Portrait: product occupies upper-mid safe zone cleanly above headline/subtitles
+    // 9:16 Portrait: product occupies hero center-safe zone cleanly above optional approved text
     stageCx = width * 0.5;
-    stageCy = height * (hasCta ? 0.37 : 0.40);
-    stageW = width * 0.82;
-    stageH = height * 0.44;
+    stageCy = height * (hasHeadline ? 0.43 : 0.48);
+    stageW = width * 0.86;
+    stageH = height * (hasHeadline ? 0.54 : 0.66);
   } else {
-    // 1:1 and 4:5: balanced upper-center stage
+    // 1:1 and 4:5: balanced hero center stage
     stageCx = width * 0.5;
-    stageCy = height * 0.39;
-    stageW = width * 0.76;
-    stageH = height * 0.44;
+    stageCy = height * (hasHeadline ? 0.44 : 0.5);
+    stageW = width * 0.82;
+    stageH = height * (hasHeadline ? 0.56 : 0.68);
   }
 
   const stageRadius = Math.min(stageW, stageH) * 0.54;
@@ -686,195 +688,77 @@ export function drawSceneFrame(
   // Top product & transparency pill (only if not already baked in renderedClip)
   if (!scene.renderedClip) {
     ctx.save();
-    const pillFontSize = Math.max(12, Math.round(minEdge * 0.025));
-    ctx.font = `700 ${pillFontSize}px "Be Vietnam Pro", sans-serif`;
-    const pillText = (productName || 'AI Product Studio').slice(0, 34);
-    const pillW = Math.min(width - padX * 2, ctx.measureText(pillText).width + minEdge * 0.055);
-    const pillH = Math.max(26, Math.round(minEdge * 0.052));
-    ctx.fillStyle = isLightBg ? 'rgba(16, 29, 54, 0.88)' : 'rgba(255, 255, 255, 0.14)';
-    ctx.beginPath();
-    ctx.roundRect(padX, topY, pillW, pillH, pillH / 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.fillText(pillText, padX + minEdge * 0.028, topY + pillH / 2);
-
+    // Keep AI simulation disclosure badge only when scene uses non-real AI-generated media
     if (scene.sourceType !== 'REAL_PRODUCT') {
       const badgeLabel = scene.sourceType === 'AI_GENERATED' ? 'Ảnh minh họa AI' : scene.sourceType === 'AI_VIDEO' ? 'Mô phỏng AI' : 'Video thực tế';
+      const pillH = Math.max(24, Math.round(minEdge * 0.044));
       ctx.font = `600 ${Math.max(10, Math.round(minEdge * 0.02))}px "Be Vietnam Pro", sans-serif`;
       const bw = ctx.measureText(badgeLabel).width + minEdge * 0.04;
       ctx.fillStyle = 'rgba(245, 158, 11, 0.92)';
       ctx.beginPath();
-      ctx.roundRect(width - padX - bw, topY, bw, pillH * 0.88, pillH / 2);
+      ctx.roundRect(width - padX - bw, topY, bw, pillH, pillH / 2);
       ctx.fill();
       ctx.fillStyle = '#101d36';
-      ctx.fillText(badgeLabel, width - padX - bw + minEdge * 0.02, topY + (pillH * 0.88) / 2);
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.fillText(badgeLabel, width - padX - bw + minEdge * 0.02, topY + pillH / 2);
     }
     ctx.restore();
   }
 
-  // Non-overlapping text, subtitle & CTA overlay zones
+  // Render ONLY user-approved on-screen product text when explicitly enabled
   ctx.save();
-  if (!scene.renderedClip) {
+  if (!scene.renderedClip && hasHeadline) {
     if (isLandscape) {
-      // Right-column editorial stack for 16:9
-      const colX = width * 0.56;
+      const colX = width * 0.6;
       const colW = width - colX - padX;
-      let cursorY = height * 0.24;
-
-      if (scene.sceneTitle) {
-        ctx.font = `700 ${Math.max(12, Math.round(minEdge * 0.024))}px "Be Vietnam Pro", sans-serif`;
-        ctx.fillStyle = profile.accent;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.fillText(scene.sceneTitle.toUpperCase(), colX, cursorY);
-        cursorY += Math.round(minEdge * 0.042);
+      const headlineSize = Math.max(16, Math.round(minEdge * 0.048 * headlineScale));
+      ctx.font = `800 ${headlineSize}px "Be Vietnam Pro", sans-serif`;
+      const lines = wrapTextLines(ctx, scene.onScreenText, colW).slice(0, 3);
+      const blockH = lines.length * (headlineSize * 1.24);
+      let hy = headlinePosition === 'top' ? height * 0.16 : headlinePosition === 'bottom' ? height - blockH - height * 0.14 : (height - blockH) / 2;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      for (const line of lines) {
+        ctx.fillStyle = headlineColor;
+        ctx.shadowColor = isLightBg ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.48)';
+        ctx.shadowBlur = 8;
+        ctx.fillText(line, colX, hy);
+        hy += headlineSize * 1.24;
       }
-
-      if (hasHeadline) {
-        const headlineSize = Math.max(16, Math.round(minEdge * 0.046 * headlineScale));
-        ctx.font = `800 ${headlineSize}px "Be Vietnam Pro", sans-serif`;
-        const lines = wrapTextLines(ctx, scene.onScreenText, colW).slice(0, 3);
-        const headlineDrawY = headlinePosition === 'top' ? Math.max(height * 0.14, topY + 26) : cursorY;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        let hy = headlineDrawY;
-        for (const line of lines) {
-          ctx.fillStyle = headlineColor;
-          ctx.shadowColor = isLightBg ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.48)';
-          ctx.shadowBlur = 8;
-          ctx.fillText(line, colX, hy);
-          hy += headlineSize * 1.24;
-        }
-        ctx.shadowBlur = 0;
-        if (headlinePosition !== 'top') {
-          cursorY = hy + Math.round(minEdge * 0.025);
-        }
-      }
-
-      if (hasSubtitle) {
-        const subSize = Math.max(13, Math.round(minEdge * 0.026));
-        ctx.font = `500 ${subSize}px "Be Vietnam Pro", sans-serif`;
-        const subLines = wrapTextLines(ctx, scene.narration, colW - minEdge * 0.04).slice(0, 3);
-        if (subLines.length > 0) {
-          const boxH = subLines.length * (subSize * 1.38) + minEdge * 0.032;
-          ctx.fillStyle = 'rgba(10, 18, 36, 0.78)';
-          ctx.beginPath();
-          ctx.roundRect(colX, cursorY, colW, boxH, Math.round(minEdge * 0.02));
-          ctx.fill();
-          ctx.fillStyle = '#f8fafc';
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'top';
-          let sy = cursorY + minEdge * 0.016;
-          for (const line of subLines) {
-            ctx.fillText(line, colX + minEdge * 0.02, sy);
-            sy += subSize * 1.38;
-          }
-          cursorY += boxH + Math.round(minEdge * 0.03);
-        }
-      }
-
-      if (hasCta) {
-        const ctaSize = Math.max(13, Math.round(minEdge * 0.027));
-        ctx.font = `700 ${ctaSize}px "Be Vietnam Pro", sans-serif`;
-        const cw = Math.min(colW, ctx.measureText(ctaText).width + minEdge * 0.08);
-        const ch = Math.max(32, Math.round(minEdge * 0.068));
-        const cy = Math.min(height - ch - height * 0.07, cursorY);
-        ctx.fillStyle = '#2563eb';
-        ctx.beginPath();
-        ctx.roundRect(colX, cy, cw, ch, ch / 2);
-        ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(ctaText, colX + cw / 2, cy + ch / 2);
-      }
+      ctx.shadowBlur = 0;
     } else {
-      // Portrait / Square / 4:5 bottom-aligned stack computed bottom-up to guarantee ZERO collisions
-      let nextBottomY = height - Math.round(height * 0.045);
-
-      if (hasSubtitle) {
-        const subFontSize = Math.max(12, Math.round(minEdge * 0.028));
-        ctx.font = `500 ${subFontSize}px "Be Vietnam Pro", sans-serif`;
-        const subLines = wrapTextLines(ctx, scene.narration, width - padX * 2.5).slice(0, 2);
-        if (subLines.length > 0) {
-          const boxH = subLines.length * (subFontSize * 1.38) + minEdge * 0.028;
-          const boxY = nextBottomY - boxH;
-          ctx.fillStyle = 'rgba(10, 18, 36, 0.78)';
-          ctx.beginPath();
-          ctx.roundRect(padX, boxY, width - padX * 2, boxH, Math.round(minEdge * 0.022));
-          ctx.fill();
-          ctx.fillStyle = '#f8fafc';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'top';
-          let sy = boxY + minEdge * 0.014;
-          for (const line of subLines) {
-            ctx.fillText(line, width / 2, sy);
-            sy += subFontSize * 1.36;
-          }
-          nextBottomY = boxY - Math.round(height * 0.016);
-        }
+      // Portrait / 4:5 / Square: keep inside TikTok/Reels safe vertical zone (avoid bottom 20% & top 14%)
+      const headSize = Math.max(14, Math.round(minEdge * 0.044 * headlineScale));
+      ctx.font = `800 ${headSize}px "Be Vietnam Pro", sans-serif`;
+      const lines = wrapTextLines(ctx, scene.onScreenText, width - padX * 2.2).slice(0, 2);
+      const blockH = lines.length * (headSize * 1.24);
+      let y = height - Math.round(height * 0.21) - blockH;
+      if (headlinePosition === 'top') {
+        y = Math.round(height * 0.15);
+      } else if (headlinePosition === 'center') {
+        y = Math.round((height - blockH) * 0.5);
       }
-
-      if (hasHeadline) {
-        const headSize = Math.max(14, Math.round(minEdge * 0.044 * headlineScale));
-        ctx.font = `800 ${headSize}px "Be Vietnam Pro", sans-serif`;
-        const lines = wrapTextLines(ctx, scene.onScreenText, width - padX * 2).slice(0, 2);
-        const blockH = lines.length * (headSize * 1.24);
-        let y = nextBottomY - blockH;
-        if (headlinePosition === 'top') {
-          y = topY + Math.max(34, Math.round(minEdge * 0.068));
-        } else if (headlinePosition === 'center') {
-          y = Math.max(topY + 40, Math.round((height - blockH) * 0.52));
-        }
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        if (headlinePosition === 'center') {
-          const scrimPadY = Math.round(minEdge * 0.016);
-          ctx.fillStyle = isLightBg ? 'rgba(255,255,255,0.78)' : 'rgba(10,18,36,0.58)';
-          ctx.beginPath();
-          ctx.roundRect(padX, y - scrimPadY, width - padX * 2, blockH + scrimPadY * 2, Math.round(minEdge * 0.02));
-          ctx.fill();
-        }
-        for (const line of lines) {
-          ctx.fillStyle = headlineColor;
-          ctx.shadowColor = isLightBg ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.52)';
-          ctx.shadowBlur = 10;
-          ctx.fillText(line, width / 2, y);
-          y += headSize * 1.24;
-        }
-        ctx.shadowBlur = 0;
-        if (headlinePosition === 'bottom') {
-          nextBottomY -= blockH + Math.round(height * 0.018);
-        }
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      const scrimPadY = Math.round(minEdge * 0.016);
+      ctx.fillStyle = isLightBg ? 'rgba(255,255,255,0.72)' : 'rgba(10,18,36,0.52)';
+      ctx.beginPath();
+      ctx.roundRect(padX, y - scrimPadY, width - padX * 2, blockH + scrimPadY * 2, Math.round(minEdge * 0.02));
+      ctx.fill();
+      for (const line of lines) {
+        ctx.fillStyle = headlineColor;
+        ctx.shadowColor = isLightBg ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.52)';
+        ctx.shadowBlur = 10;
+        ctx.fillText(line, width / 2, y);
+        y += headSize * 1.24;
       }
-
-      if (hasCta) {
-        const ctaFontSize = Math.max(13, Math.round(minEdge * 0.029));
-        ctx.font = `700 ${ctaFontSize}px "Be Vietnam Pro", sans-serif`;
-        const cw = Math.min(width - padX * 2, ctx.measureText(ctaText).width + minEdge * 0.09);
-        const ch = Math.max(32, Math.round(minEdge * 0.068));
-        const cy = nextBottomY - ch;
-        ctx.fillStyle = '#2563eb';
-        ctx.beginPath();
-        ctx.roundRect((width - cw) / 2, cy, cw, ch, ch / 2);
-        ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(ctaText, width / 2, cy + ch / 2);
-      }
+      ctx.shadowBlur = 0;
     }
   }
-
-  // Bottom timeline progress bar
-  const totalBarW = width - padX * 2;
-  const overallProgress = (sceneIndex + rawT) / Math.max(1, totalScenes);
-  ctx.fillStyle = isLightBg ? 'rgba(16,29,54,0.16)' : 'rgba(255,255,255,0.22)';
-  ctx.fillRect(padX, height - Math.round(height * 0.02), totalBarW, 4);
-  ctx.fillStyle = '#3672e8';
-  ctx.fillRect(padX, height - Math.round(height * 0.02), totalBarW * overallProgress, 4);
+  ctx.restore();
+  void sceneIndex;
+  void totalScenes;
 
   ctx.restore();
 }

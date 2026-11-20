@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ConfirmDialog from './ConfirmDialog';
 import { downloadVideoAsset } from '../lib/videoDownload';
 import {
+  AUDIO_LIBRARY_TRACKS,
+  EXTERNAL_MUSIC_LIBRARIES,
+  PreviewAudioController,
+  decodeMediaFileToAudioTrack,
+  synthesizeLibraryTrackBuffer,
+  type CustomAudioTrack,
+} from '../lib/audioEngine';
+import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
@@ -280,6 +288,11 @@ export default function StudioPage({
   const savePromiseRef = useRef<Promise<string> | null>(null);
   const projectIdRef = useRef<string>(initialProjectId || '');
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+  const [selectedLibraryTrackId, setSelectedLibraryTrackId] = useState<string>(AUDIO_LIBRARY_TRACKS[0].id);
+  const [customAudioTrack, setCustomAudioTrack] = useState<CustomAudioTrack | null>(null);
+  const [audioUploadBusy, setAudioUploadBusy] = useState(false);
+  const previewAudioRef = useRef<PreviewAudioController | null>(null);
+  const libraryBufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
   const [previewTime, setPreviewTime] = useState(0);
 
   // Scene-level editing, staging, AI diff, render & batch state
@@ -569,12 +582,63 @@ export default function StudioPage({
     });
   }, [previewTime, scenes, aspectRatio, ctaText, selectedProduct, title, industry, imageCacheRevision, previewSceneOverride, sceneDiffs]);
 
-  // Playback timer
+  // Playback timer + synchronized preview audio
   useEffect(() => {
-    if (!isPlayingPreview || scenes.length === 0) return;
+    if (!previewAudioRef.current) {
+      previewAudioRef.current = new PreviewAudioController();
+    }
+    if (!isPlayingPreview || scenes.length === 0) {
+      previewAudioRef.current.stop();
+      return;
+    }
+
+    let cancelled = false;
+    const total = Math.max(1, totalScenesDuration);
+    const startOffset = previewTime >= total - 0.05 ? 0 : previewTime;
+
+    const startAudio = async () => {
+      if (!musicConfig.enabled && !customAudioTrack) return;
+      let musicBuf: AudioBuffer | null = null;
+      let volume = musicConfig.volume;
+      let muted = !musicConfig.enabled;
+      let trimStart = 0;
+      let trimEnd: number | undefined;
+      let loop = true;
+
+      if (customAudioTrack) {
+        musicBuf = customAudioTrack.buffer;
+        volume = customAudioTrack.volume;
+        muted = customAudioTrack.muted || !musicConfig.enabled;
+        trimStart = customAudioTrack.trimStartSec;
+        trimEnd = customAudioTrack.trimEndSec;
+        loop = customAudioTrack.loop;
+      } else if (musicConfig.enabled) {
+        const cacheKey = `${selectedLibraryTrackId}:${Math.ceil(total)}`;
+        const cached = libraryBufferCacheRef.current.get(cacheKey);
+        if (cached) {
+          musicBuf = cached;
+        } else {
+          musicBuf = await synthesizeLibraryTrackBuffer(selectedLibraryTrackId, Math.max(10, Math.ceil(total)));
+          libraryBufferCacheRef.current.set(cacheKey, musicBuf);
+        }
+      }
+
+      if (cancelled || !previewAudioRef.current) return;
+      previewAudioRef.current.play({
+        startOffsetSec: startOffset,
+        totalDurationSec: total,
+        musicBuffer: musicBuf,
+        musicVolume: volume,
+        musicMuted: muted,
+        musicTrimStartSec: trimStart,
+        musicTrimEndSec: trimEnd,
+        musicLoop: loop,
+      });
+    };
+    void startAudio();
+
     let raf = 0;
     let last = performance.now();
-    const total = Math.max(1, totalScenesDuration);
     const tick = (now: number) => {
       const dt = (now - last) / 1000;
       last = now;
@@ -582,6 +646,7 @@ export default function StudioPage({
         const next = prev + dt;
         if (next >= total) {
           setIsPlayingPreview(false);
+          previewAudioRef.current?.stop();
           return 0;
         }
         return next;
@@ -589,8 +654,12 @@ export default function StudioPage({
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [isPlayingPreview, scenes.length, totalScenesDuration]);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      previewAudioRef.current?.stop();
+    };
+  }, [isPlayingPreview, scenes.length, totalScenesDuration, musicConfig.enabled, musicConfig.volume, selectedLibraryTrackId, customAudioTrack]);
 
   const seekToScene = (index: number, listOverride?: VideoScene[]) => {
     const list = listOverride || scenes;
@@ -819,8 +888,8 @@ export default function StudioPage({
           sceneRole: prev.length === 0 ? 'intro' : 'showcase',
           durationSec: 5,
           narration: 'Nội dung giới thiệu điểm nổi bật của sản phẩm hoặc cảnh quay.',
-          onScreenText: selectedProduct?.name || title.trim() || `Phân cảnh ${prev.length + 1}`,
-          showOnScreenText: true,
+          onScreenText: '',
+          showOnScreenText: false,
           imageId: fallbackImg?.id || null,
           imageUrl: fallbackImg?.imageUrl || '',
           sourceType: 'REAL_PRODUCT',
@@ -2786,28 +2855,181 @@ export default function StudioPage({
                 {musicConfig.enabled && (
                   <>
                     <label className="field-label">
-                      Không khí âm nhạc
+                      Thư viện nhạc nền hợp pháp (miễn phí thương mại)
                       <select
-                        value={musicConfig.mood}
-                        onChange={e => setMusicConfig(m => ({ ...m, mood: e.target.value as MusicConfig['mood'] }))}
+                        value={selectedLibraryTrackId}
+                        onChange={e => {
+                          setSelectedLibraryTrackId(e.target.value);
+                          const chosen = AUDIO_LIBRARY_TRACKS.find(t => t.id === e.target.value);
+                          if (chosen) {
+                            const moodMap: Record<string, MusicConfig['mood']> = {
+                              upbeat: 'upbeat-modern',
+                              energetic: 'upbeat-modern',
+                              luxury: 'elegant-ambient',
+                              elegant: 'elegant-ambient',
+                              chill: 'warm-acoustic',
+                              tech: 'tech-pulse',
+                            };
+                            setMusicConfig(m => ({ ...m, mood: moodMap[chosen.mood] || 'upbeat-modern' }));
+                          }
+                        }}
                       >
-                        <option value="upbeat-modern">Năng động, hiện đại</option>
-                        <option value="elegant-ambient">Sang trọng, thư thái</option>
-                        <option value="warm-acoustic">Ấm áp, gần gũi</option>
-                        <option value="tech-pulse">Công nghệ, nhịp nhanh</option>
+                        {AUDIO_LIBRARY_TRACKS.map(track => (
+                          <option key={track.id} value={track.id}>
+                            {track.name} ({track.category} · {track.bpm} BPM)
+                          </option>
+                        ))}
                       </select>
                     </label>
+                    {(() => {
+                      const activeLib = AUDIO_LIBRARY_TRACKS.find(t => t.id === selectedLibraryTrackId);
+                      return activeLib ? (
+                        <small className="muted-copy" style={{ display: 'block', marginBottom: 8 }}>
+                          {activeLib.description} Giấy phép: {activeLib.license}. Nền tảng: {activeLib.allowedPlatforms.join(', ')}.
+                        </small>
+                      ) : null;
+                    })()}
+
                     <label className="field-label">
-                      Âm lượng nhạc nền: {Math.round(musicConfig.volume * 100)}%
+                      Âm lượng nhạc nền: {Math.round((customAudioTrack ? customAudioTrack.volume : musicConfig.volume) * 100)}%
                       <input
                         type="range"
                         min={0.05}
-                        max={0.45}
+                        max={1}
                         step={0.05}
-                        value={musicConfig.volume}
-                        onChange={e => setMusicConfig(m => ({ ...m, volume: Number(e.target.value) }))}
+                        value={customAudioTrack ? customAudioTrack.volume : musicConfig.volume}
+                        onChange={e => {
+                          const v = Number(e.target.value);
+                          if (customAudioTrack) {
+                            setCustomAudioTrack(prev => (prev ? { ...prev, volume: v } : prev));
+                          } else {
+                            setMusicConfig(m => ({ ...m, volume: v }));
+                          }
+                        }}
                       />
                     </label>
+
+                    <div className="btn-row" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+                      <label className="secondary-btn" style={{ cursor: audioUploadBusy ? 'wait' : 'pointer' }}>
+                        {audioUploadBusy ? 'Đang xử lý...' : 'Tải file âm thanh (MP3/WAV/M4A)'}
+                        <input
+                          type="file"
+                          accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg"
+                          style={{ display: 'none' }}
+                          disabled={audioUploadBusy}
+                          onChange={async e => {
+                            const file = e.target.files?.[0];
+                            e.target.value = '';
+                            if (!file) return;
+                            setAudioUploadBusy(true);
+                            setError('');
+                            try {
+                              if (customAudioTrack?.objectUrl) URL.revokeObjectURL(customAudioTrack.objectUrl);
+                              const track = await decodeMediaFileToAudioTrack(file, 'audio-upload');
+                              setCustomAudioTrack(track);
+                              setMessage(`Đã tải tệp âm thanh "${track.name}" (${track.durationSec.toFixed(1)}s).`);
+                            } catch (err) {
+                              setError(err instanceof Error ? err.message : 'Không thể đọc tệp âm thanh.');
+                            } finally {
+                              setAudioUploadBusy(false);
+                            }
+                          }}
+                        />
+                      </label>
+                      <label className="secondary-btn" style={{ cursor: audioUploadBusy ? 'wait' : 'pointer' }}>
+                        {audioUploadBusy ? 'Đang tách...' : 'Tách âm thanh từ video'}
+                        <input
+                          type="file"
+                          accept="video/*,.mp4,.webm,.mov"
+                          style={{ display: 'none' }}
+                          disabled={audioUploadBusy}
+                          onChange={async e => {
+                            const file = e.target.files?.[0];
+                            e.target.value = '';
+                            if (!file) return;
+                            setAudioUploadBusy(true);
+                            setError('');
+                            try {
+                              if (customAudioTrack?.objectUrl) URL.revokeObjectURL(customAudioTrack.objectUrl);
+                              const track = await decodeMediaFileToAudioTrack(file, 'video-extract');
+                              setCustomAudioTrack(track);
+                              setMessage(`Đã tách track âm thanh từ video "${track.name}" (${track.durationSec.toFixed(1)}s). Hình ảnh video nguồn không được đưa vào sản phẩm.`);
+                            } catch (err) {
+                              setError(err instanceof Error ? err.message : 'Không thể tách âm thanh từ video.');
+                            } finally {
+                              setAudioUploadBusy(false);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+
+                    {customAudioTrack && (
+                      <div className="info-strip" style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <strong>
+                            {customAudioTrack.sourceType === 'video-extract' ? 'Âm thanh tách từ video: ' : 'Âm thanh đã tải: '}
+                            {customAudioTrack.name} ({customAudioTrack.durationSec.toFixed(1)}s)
+                          </strong>
+                          <button
+                            type="button"
+                            className="secondary-btn danger-outline"
+                            onClick={() => {
+                              URL.revokeObjectURL(customAudioTrack.objectUrl);
+                              setCustomAudioTrack(null);
+                            }}
+                          >
+                            Xóa âm thanh riêng
+                          </button>
+                        </div>
+                        <audio controls src={customAudioTrack.objectUrl} style={{ width: '100%' }} />
+                        <div className="form-grid-2">
+                          <label className="field-label">
+                            Bắt đầu từ (giây)
+                            <input
+                              type="number"
+                              min={0}
+                              max={Math.max(0, customAudioTrack.durationSec - 0.5)}
+                              step={0.5}
+                              value={customAudioTrack.trimStartSec}
+                              onChange={e =>
+                                setCustomAudioTrack(prev =>
+                                  prev ? { ...prev, trimStartSec: Math.max(0, Math.min(prev.trimEndSec - 0.5, Number(e.target.value) || 0)) } : prev
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="field-label">
+                            Kết thúc tại (giây)
+                            <input
+                              type="number"
+                              min={0.5}
+                              max={customAudioTrack.durationSec}
+                              step={0.5}
+                              value={Number(customAudioTrack.trimEndSec.toFixed(1))}
+                              onChange={e =>
+                                setCustomAudioTrack(prev =>
+                                  prev ? { ...prev, trimEndSec: Math.min(prev.durationSec, Math.max(prev.trimStartSec + 0.5, Number(e.target.value) || prev.durationSec)) } : prev
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ marginTop: 10, fontSize: 12.5, color: 'var(--muted)' }}>
+                      <strong>Thư viện nhạc thương mại theo nền tảng:</strong>{' '}
+                      {EXTERNAL_MUSIC_LIBRARIES.map((lib, i) => (
+                        <span key={lib.name}>
+                          {i > 0 ? ' · ' : ''}
+                          <a href={lib.url} target="_blank" rel="noreferrer" title={lib.note}>
+                            {lib.name}
+                          </a>
+                        </span>
+                      ))}
+                      <span> (Lưu ý bản quyền: nhạc của từng nền tảng chỉ dùng khi đăng đúng nền tảng đó).</span>
+                    </div>
                   </>
                 )}
               </div>
