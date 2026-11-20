@@ -256,6 +256,7 @@ export default function StudioPage({
   const [variants, setVariants] = useState<ScriptVariant[]>([]);
   const [activeVariantIdx, setActiveVariantIdx] = useState(0);
   const [scenes, setScenes] = useState<VideoScene[]>([]);
+  const [activeSceneIndex, setActiveSceneIndex] = useState(0);
   const [scriptConfirmed, setScriptConfirmed] = useState(false);
 
   const [productsLoading, setProductsLoading] = useState(true);
@@ -269,6 +270,7 @@ export default function StudioPage({
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [savedOutputUrl, setSavedOutputUrl] = useState<string | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
 
   // Preview playback state
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -726,6 +728,7 @@ export default function StudioPage({
       };
     });
     setScenes(mapped);
+    setActiveSceneIndex(0);
     setScriptConfirmed(false);
     setSceneReviews({});
     setSceneDiffs({});
@@ -800,6 +803,7 @@ export default function StudioPage({
   };
 
   const addEmptyScene = () => {
+    setActiveSceneIndex(scenes.length);
     const fallbackImg = selectedProduct?.images[0];
     setScenes(prev => {
       const next: VideoScene[] = [
@@ -1350,6 +1354,51 @@ export default function StudioPage({
       setMessage(status === 'APPROVED' ? 'Đã xác nhận phân cảnh.' : 'Đã chuyển phân cảnh về trạng thái chờ kiểm duyệt.');
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : 'Không thể cập nhật trạng thái duyệt.');
+    }
+  };
+
+  const downloadVideoFile = async (url: string, baseName: string) => {
+    if (!url) return;
+    setDownloadBusy(true);
+    setError('');
+    try {
+      const parsedUrl = new URL(url, window.location.origin);
+      if ((parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') && parsedUrl.origin !== window.location.origin) {
+        window.open(parsedUrl.toString(), '_blank', 'noopener,noreferrer');
+        return;
+      }
+      if (parsedUrl.pathname.startsWith('/api/media/project-video/')) {
+        parsedUrl.searchParams.set('download', '1');
+      }
+      const response = await fetch(parsedUrl.toString(), { credentials: 'include' });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error || `Không thể tải video (HTTP ${response.status}).`);
+      }
+      const mimeType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      if (!mimeType.startsWith('video/')) {
+        const responseText = await response.text().catch(() => '');
+        throw new Error(responseText.includes('<html') || mimeType.includes('text/html')
+          ? 'Máy chủ trả về trang HTML thay vì tệp video. Vui lòng tải lại dự án hoặc liên hệ quản trị hệ thống.'
+          : `Định dạng máy chủ trả về không phải video (${mimeType || 'không xác định'}).`);
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error('Tệp video tải về bị rỗng.');
+      const extension = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('webm') ? 'webm' : 'video';
+      const safeBaseName = baseName.replace(/\\.(mp4|webm)$/i, '').replace(/[^a-zA-Z0-9_-]+/g, '_') || 'product-video';
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = `${safeBaseName}.${extension}`;
+      anchor.style.display = 'none';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : 'Không thể tải tệp video.');
+    } finally {
+      setDownloadBusy(false);
     }
   };
 
@@ -1988,15 +2037,24 @@ export default function StudioPage({
                   }
 
                   const diff = sceneDiffs[idx];
+                  const isExpandedScene = activeSceneIndex === idx;
 
                   return (
-                    <div key={`v${activeVariantIdx}-${scene.id || idx}`} className="scene-card">
+                    <div key={`v${activeVariantIdx}-${scene.id || idx}`} className={`scene-card${isExpandedScene ? ' is-expanded' : ''}`}>
                       <div className="scene-card-head wrap">
-                        <div className="scene-card-title-group">
-                          <strong>Phân cảnh {idx + 1}</strong>
-                          {scene.sceneTitle && <span className="scene-subtitle-tag">{scene.sceneTitle}</span>}
-                          <span className={sceneStatusClass}>{sceneStatusLabel}</span>
-                        </div>
+                        <button
+                          type="button"
+                          className="scene-card-toggle"
+                          aria-expanded={isExpandedScene}
+                          onClick={() => setActiveSceneIndex(isExpandedScene ? -1 : idx)}
+                        >
+                          <span className="scene-card-title-group">
+                            <strong>Phân cảnh {idx + 1}</strong>
+                            {scene.sceneTitle && <span className="scene-subtitle-tag">{scene.sceneTitle}</span>}
+                            <span className={sceneStatusClass}>{sceneStatusLabel}</span>
+                          </span>
+                          <span className="scene-expand-indicator" aria-hidden="true">{isExpandedScene ? '−' : '+'}</span>
+                        </button>
                         <div className="scene-head-actions">
                           <button type="button" title="Xem trước phân cảnh này" onClick={() => seekToScene(idx)}>
                             <Eye size={13} />
@@ -2020,6 +2078,8 @@ export default function StudioPage({
                         </div>
                       </div>
 
+                      {isExpandedScene && (
+                        <div className="scene-card-body">
                       <div className="form-grid-2">
                         <label className="field-label">
                           Sản phẩm của phân cảnh
@@ -2178,7 +2238,7 @@ export default function StudioPage({
                         />
                       </label>
 
-                      <div className="form-grid-4">
+                      <div className="scene-media-grid">
                         <div className="field-label scene-image-upload">
                           <label htmlFor={`scene-image-input-${idx}`}>Tải ảnh riêng cho phân cảnh</label>
                           <input
@@ -2596,6 +2656,8 @@ export default function StudioPage({
                           </a>
                         </div>
                       )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -2851,13 +2913,14 @@ export default function StudioPage({
                   className="rendered-video-player"
                   onLoadedMetadata={e => applyVideoDurationWorkaround(e.currentTarget)}
                 />
-                <a
+                <button
+                  type="button"
                   className="primary-btn full-width"
-                  href={renderedVideo.url}
-                  download={`${title.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'product-video'}.${renderedVideo.result.format}`}
+                  disabled={downloadBusy}
+                  onClick={() => void downloadVideoFile(renderedVideo.url, title || 'product-video')}
                 >
-                  <Download size={16} /> Tải video .{renderedVideo.result.format.toUpperCase()}
-                </a>
+                  <Download size={16} /> {downloadBusy ? 'Đang chuẩn bị tệp...' : `Tải video .${renderedVideo.result.format.toUpperCase()}`}
+                </button>
               </div>
             )}
 
@@ -2873,9 +2936,14 @@ export default function StudioPage({
                   className="rendered-video-player"
                   onLoadedMetadata={e => applyVideoDurationWorkaround(e.currentTarget)}
                 />
-                <a className="secondary-btn full-width" href={savedOutputUrl} target="_blank" rel="noreferrer" download>
-                  <Download size={16} /> Tải bản đã lưu
-                </a>
+                <button
+                  type="button"
+                  className="secondary-btn full-width"
+                  disabled={downloadBusy}
+                  onClick={() => void downloadVideoFile(savedOutputUrl, title || 'product-video')}
+                >
+                  <Download size={16} /> {downloadBusy ? 'Đang tải video...' : 'Tải bản đã lưu'}
+                </button>
               </div>
             )}
           </div>

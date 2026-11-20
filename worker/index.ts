@@ -937,6 +937,15 @@ async function serveChunkedVideo(env: Env, request: Request, actor: UserRow, sco
   }
   const rangeHeader = request.headers.get('range');
   const contentType = meta.mimeType || 'video/webm';
+  const responseHeaders: Record<string, string> = {
+    'content-type': contentType,
+    'accept-ranges': 'bytes',
+    'cache-control': 'private, no-store',
+  };
+  if (new URL(request.url).searchParams.get('download') === '1') {
+    const extension = contentType.includes('mp4') ? 'mp4' : contentType.includes('webm') ? 'webm' : 'video';
+    responseHeaders['content-disposition'] = `attachment; filename="video-san-pham.${extension}"`;
+  }
   if (rangeHeader) {
     const m = rangeHeader.match(/bytes=(\d+)-(\d*)/);
     if (m) {
@@ -945,11 +954,9 @@ async function serveChunkedVideo(env: Env, request: Request, actor: UserRow, sco
       return new Response(combined.subarray(start, end + 1), {
         status: 206,
         headers: {
-          'content-type': contentType,
+          ...responseHeaders,
           'content-range': `bytes ${start}-${end}/${combined.length}`,
-          'accept-ranges': 'bytes',
           'content-length': String(end - start + 1),
-          'cache-control': 'private, no-store',
         },
       });
     }
@@ -957,10 +964,8 @@ async function serveChunkedVideo(env: Env, request: Request, actor: UserRow, sco
   return new Response(combined, {
     status: 200,
     headers: {
-      'content-type': contentType,
-      'accept-ranges': 'bytes',
+      ...responseHeaders,
       'content-length': String(combined.length),
-      'cache-control': 'private, no-store',
     },
   });
 }

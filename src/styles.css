@@ -4019,3 +4019,39 @@ main,
   }
 }
 
+
+
+/* Compact scene accordion and resilient scene-editor layout. */
+.scene-card { min-width: 0; }
+.scene-card-head { gap: 10px; min-width: 0; margin-bottom: 0; }
+.scene-card.is-expanded .scene-card-head { margin-bottom: 12px; }
+.scene-card-toggle {
+  display: flex; flex: 1 1 auto; min-width: 0; align-items: center;
+  justify-content: space-between; gap: 12px; padding: 5px 0;
+  border: 0; background: transparent; color: var(--ink); text-align: left;
+}
+.scene-card-toggle:hover .scene-card-title-group strong { color: var(--blue); }
+.scene-card-title-group { min-width: 0; }
+.scene-expand-indicator {
+  display: inline-grid; flex: 0 0 28px; width: 28px; height: 28px;
+  place-items: center; border: 1px solid var(--line-strong); border-radius: 8px;
+  background: #fff; color: var(--blue); font-size: 20px; line-height: 1;
+}
+.scene-card-body { display: grid; min-width: 0; gap: 12px; }
+.scene-card-body > * { min-width: 0; }
+.scene-card-body .form-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.scene-media-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px; min-width: 0;
+}
+.scene-media-grid > *, .scene-card-body .field-label { min-width: 0; max-width: 100%; }
+.scene-media-grid select, .scene-media-grid input,
+.scene-card-body select, .scene-card-body textarea { min-width: 0; max-width: 100%; }
+.scene-media-grid select { width: 100%; text-overflow: ellipsis; }
+.scene-head-actions { flex: 0 0 auto; flex-wrap: wrap; }
+@media (max-width: 700px) {
+  .scene-card { padding: 11px; }
+  .scene-card-head { align-items: flex-start; }
+  .scene-head-actions { max-width: 100%; }
+  .scene-media-grid, .scene-card-body .form-grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
